@@ -78,13 +78,13 @@ const blockedStudents = new Set(); // Set of "roomName:studentName" or just glob
 let activeVoice = "reference_voice.wav"; // Default voice
 
 // Path to voices directory
-const VOICES_DIR = path.join(__dirname, "..", "voice-engine", "voices");
+const VOICES_DIR = path.join(__dirname, "..", "Ai-teacher-voicemodel", "voices");
 
 // Voice Management Endpoints
 app.get("/list-voices", (req, res) => {
   try {
     const rootVoices = [];
-    const engineRoot = path.join(__dirname, "..", "voice-engine");
+    const engineRoot = path.join(__dirname, "..", "Ai-teacher-voicemodel");
 
     // Check root for reference_voice.wav
     if (fs.existsSync(path.join(engineRoot, "reference_voice.wav"))) {
