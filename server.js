@@ -312,17 +312,58 @@ app.post("/token", async (req, res) => {
 
 app.post("/ask-ai", async (req, res) => {
   try {
-    const { question } = req.body;
+    const { question, studentName, topic } = req.body;
 
     if (!question) {
       return res.status(400).json({ error: "Question is required" });
     }
 
-    // 👋 Greeting interceptor — reply instantly without calling AI
-    const greetingPattern = /^(hi|hello|hey|good morning|good afternoon|good evening|howdy|greetings|sup|yo)[!.,\s]*$/i;
-    if (greetingPattern.test(question.trim())) {
-      return res.json({ answer: "Hello! Please share your doubt so I can help you." });
+    const student = studentName || "student";
+    // Default to "this specific ongoing technical class session" if empty so the prompt still rejects obvious completely unrelated stuff.
+    const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
+
+    console.log(`\n\n===========================================`);
+    console.log(`[ASK-AI] Received Request for Student: ${student}`);
+    console.log(`[ASK-AI] Topic Received from Frontend: "${topic}" -> Evaluated as: "${safeTopic}"`);
+    console.log(`[ASK-AI] Question: "${question}"`);
+
+    // 🧠 1. Strict Validation
+    const validationPrompt = `Evaluate the following student input based on the current class topic: "${safeTopic}".
+    
+Input: "${question}"
+
+RULES:
+1. Identify if the input is actually an academic question or doubt. If the input is just a greeting (e.g., "Hi", "Hello", "Good morning"), an acknowledgement ("Thank you", "Sorry"), random text (e.g., "asdfg"), or any non-question casual message, reply with EXACTLY the word "IGNORE".
+2. If it is a valid question, evaluate if it is STRICTLY and DIRECTLY related to the core focus of the class topic.
+3. If it is related, reply with EXACTLY the word "YES".
+4. If it deviates into other domains, out of scope, tangentially related, or is completely unrelated (e.g., asking about different subjects, other technologies, or general knowledge), reply with EXACTLY the word "NO".
+
+OUTPUT NOTHING ELSE. Choose exactly ONE of these three words: YES, NO, or IGNORE.`;
+
+    const validationResponse = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: validationPrompt }],
+      temperature: 0.0,
+      max_tokens: 10,
+    });
+
+    const isRelatedRaw = validationResponse.choices[0]?.message?.content?.trim() || "";
+    const isRelated = isRelatedRaw.toUpperCase();
+    console.log(`[ASK-AI] Validation LLM replied: "${isRelatedRaw}"`);
+
+    if (isRelated.includes("IGNORE")) {
+      console.log(`[ASK-AI] Ignored non-question or casual input.`);
+      return res.json({ ignored: true });
     }
+
+    if (isRelated.includes("NO") || !isRelated.includes("YES")) {
+      console.log(`[ASK-AI] Rejected question as out-of-topic.`);
+      return res.json({ answer: `${student}, kindly ask questions related to our subject.` });
+    }
+
+    console.log(`[ASK-AI] Proceeding to Answer Generation...`);
+    // 🤖 2. Answer the Question
+    const topicContext = `The current class topic is: "${safeTopic}".`;
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -330,9 +371,9 @@ app.post("/ask-ai", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a friendly classroom Teacher. Answer student questions in SHORT, SWEET, simple English — maximum 3 lines. " +
+            `You are a strict but friendly classroom Teacher. ${topicContext} ` +
             "RULES: " +
-            "1. Give a clear, direct answer in plain English. " +
+            "1. Give a clear, direct answer to the student's question in plain English. " +
             "2. Never exceed 3 lines total. " +
             "3. Never use 'Namaste', 'Ji', or any cultural/regional words. " +
             "4. Never use filler openers like 'Great question!' or 'Of course!'. " +
