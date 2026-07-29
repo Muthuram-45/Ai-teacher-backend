@@ -5,7 +5,7 @@ const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const Groq = require("groq-sdk");
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -560,6 +560,79 @@ The correctAnswer should be the index (0-3) of the correct option.`;
   }
 });
 
+// 🎯 Generate Attention Popup Question
+app.post("/api/attention-question", async (req, res) => {
+  try {
+    const { className, topic } = req.body;
+
+    if (!topic && !className) {
+      return res.status(400).json({ error: "className or topic is required" });
+    }
+
+    const safeClassName = className || "General";
+    const safeTopic = topic || "General Study";
+
+    const prompt = `You are an educational assistant. Generate exactly one single, very basic and simple multiple-choice question to check if a student is paying attention. The question should be a fundamental concept directly related to the class topic and class name.
+
+Class Name: ${safeClassName}
+Topic: ${safeTopic}
+
+Generate a question that:
+1. Is directly related to the topic and class name
+2. Is extremely basic, fundamental, and easy to answer
+3. Has 3 simple, clear options (A, B, C)
+4. Has exactly one correct answer
+5. Is concise and can be read and answered quickly (under 30 seconds)
+
+Return ONLY a valid JSON object in this exact format, with no additional text or markdown formatting blocks:
+{
+  "question": "Question text here?",
+  "options": ["Option A", "Option B", "Option C"],
+  "correctAnswer": 0
+}
+
+The correctAnswer should be the index (0-2) of the correct option.`;
+
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a question generator. Return only a valid JSON object with no additional text or formatting.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.7,
+    });
+
+    let questionObj;
+    try {
+      const responseText = completion.choices[0]?.message?.content.trim();
+      const jsonText = responseText
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
+        .trim();
+      questionObj = JSON.parse(jsonText);
+    } catch (parseError) {
+      console.error("❌ JSON Parse Error:", parseError);
+      return res
+        .status(500)
+        .json({
+          error: "Failed to parse attention question or AI returned invalid format",
+        });
+    }
+
+    res.json(questionObj);
+  } catch (err) {
+    console.error("❌ ATTENTION QUESTION ERROR:", err);
+    res.status(500).json({ error: "Attention question generation failed" });
+  }
+});
+
 // 📤 Submit Quiz
 app.post("/submit-quiz", async (req, res) => {
   try {
@@ -698,6 +771,36 @@ app.post("/encourage-student", async (req, res) => {
 
     if (!name || !question) {
       return res.status(400).json({ error: "Name and question are required" });
+    }
+
+    // 1. Validate if the input should be ignored
+    const validationPrompt = `Determine if the following student input is an academic question or doubt, or if it should be ignored.
+    
+Input: "${question}"
+
+RULES:
+1. If the input is a greeting (e.g., "Hi", "Hello", "How are you", "Good morning"), an acknowledgement (e.g., "OK", "Thank you", "Sorry"), random/meaningless text (e.g., "asdfg"), or any casual non-academic message, reply with EXACTLY the word "IGNORE".
+2. Otherwise, if it is a question or academic doubt, reply with EXACTLY the word "PROCEED".
+
+OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
+
+    const validationResponse = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: validationPrompt }],
+      temperature: 0.0,
+      max_tokens: 10,
+    });
+
+    const validationResult =
+      validationResponse.choices[0]?.message?.content?.trim()?.toUpperCase() ||
+      "";
+    console.log(
+      `[ENCOURAGE-STUDENT] Validation result for "${question}": "${validationResult}"`,
+    );
+
+    if (validationResult.includes("IGNORE")) {
+      console.log(`[ENCOURAGE-STUDENT] Ignored non-question or casual input.`);
+      return res.json({ encouragement: null, ignored: true });
     }
 
     const prompt = `You are an encouraging Indian Teacher's Assistant. A student named "${name}" just asked this academic doubt: "${question}".
