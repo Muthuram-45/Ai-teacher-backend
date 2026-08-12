@@ -77,6 +77,9 @@ const waitingStudents = {}; // { requestId: { name, room, status: 'waiting' | 'a
 const blockedStudents = new Set(); // Set of "roomName:studentName" or just globally? Let's do "roomName:studentName"
 let activeVoice = "reference_voice.wav"; // Default voice
 
+// In-memory activity summaries
+const studentActivitiesData = {}; // { roomName: { studentName: { awayTime, inactiveTime, backgroundTime, warningCount } } }
+
 // Path to voices directory
 const VOICES_DIR = path.join(__dirname, "..", "Ai-teacher-voicemodel", "voices");
 
@@ -744,6 +747,12 @@ app.post("/end-room", async (req, res) => {
 
     await roomService.deleteRoom(roomName);
     endedRooms.add(roomName); // 🔒 Mark room as ended
+    
+    // Clear activity tracking for this room
+    if (studentActivitiesData[roomName]) {
+      delete studentActivitiesData[roomName];
+    }
+    
     console.log(`🗑️ Room ${roomName} has been ended by teacher.`);
     res.json({ success: true, message: `Room ${roomName} ended.` });
   } catch (e) {
@@ -752,6 +761,54 @@ app.post("/end-room", async (req, res) => {
     console.error("❌ END ROOM ERROR:", e);
     res.status(500).json({ error: "Failed to end room" });
   }
+});
+
+// 📊 Activity Sync
+app.post("/api/activity-sync", (req, res) => {
+  const { roomName, studentName, awayTime, inactiveTime, backgroundTime, warningCount } = req.body;
+  if (!roomName || !studentName) {
+    return res.status(400).json({ error: "roomName and studentName required" });
+  }
+  
+  if (!studentActivitiesData[roomName]) {
+    studentActivitiesData[roomName] = {};
+  }
+  
+  studentActivitiesData[roomName][studentName] = {
+    awayTime: awayTime || 0,
+    inactiveTime: inactiveTime || 0,
+    backgroundTime: backgroundTime || 0,
+    warningCount: warningCount || 0,
+    lastUpdated: new Date().toISOString()
+  };
+  
+  res.json({ success: true });
+});
+
+// 📥 Download Activity History CSV
+app.get("/api/activity-history/:roomName", (req, res) => {
+  const { roomName } = req.params;
+  const roomData = studentActivitiesData[roomName];
+
+  if (!roomData) {
+    return res.status(404).json({ error: "No activity data found for this room" });
+  }
+
+  // Create CSV Header
+  let csvData = "Student Name,Total Away Time (s),Total Inactive Time (s),Total Background Time (s),Total Warnings\n";
+
+  // Add rows
+  for (const [studentName, data] of Object.entries(roomData)) {
+    const away = Math.floor(data.awayTime / 1000);
+    const inactive = Math.floor(data.inactiveTime / 1000);
+    const bg = Math.floor(data.backgroundTime / 1000);
+    csvData += `${studentName},${away},${inactive},${bg},${data.warningCount}\n`;
+  }
+
+  // Set headers to trigger file download
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="activity_report_${roomName}.csv"`);
+  res.status(200).send(csvData);
 });
 
 // 🔍 Check Room Status (for student join page)
