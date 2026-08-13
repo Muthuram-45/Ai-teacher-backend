@@ -18,10 +18,15 @@ app.use("/api", uploadroutes);
 const authRoutes = require("./Route/authRoutes");
 app.use("/api/auth", authRoutes);
 
+// Import and use multilingual routes
+const multilingualRoutes = require("./Multilingual/translationGateway");
+app.use("/api/multilingual", multilingualRoutes);
+
 // 🔊 TTS Proxy to bypass CORS for recording
 app.get("/api/tts", async (req, res) => {
   try {
     const text = req.query.text;
+    const lang = req.query.lang || 'en';
     if (!text) return res.status(400).send("Text is required");
 
     // Google Translate TTS silently fails on long text — reject early
@@ -30,7 +35,7 @@ app.get("/api/tts", async (req, res) => {
     //   return res.status(400).send("Text too long. Split into chunks of ≤200 chars.");
     // }
 
-    const url = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=en&q=${encodeURIComponent(text)}`;
+    const url = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=${lang}&q=${encodeURIComponent(text)}`;
 
     // Add User-Agent to satisfy Google's protection
     const response = await fetch(url, {
@@ -127,7 +132,7 @@ const getDeviceType = (userAgent) => {
 };
 
 app.post("/request-join", async (req, res) => {
-  const { name, room } = req.body;
+  const { name, room, preferredLanguage } = req.body;
   if (!name || !room) {
     return res.status(400).json({ error: "Missing name or room" });
   }
@@ -142,9 +147,9 @@ app.post("/request-join", async (req, res) => {
   const deviceType = getDeviceType(userAgent);
 
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  waitingStudents[requestId] = { name, room, status: "waiting", deviceType };
+  waitingStudents[requestId] = { name, room, status: "waiting", deviceType, preferredLanguage: preferredLanguage || "en" };
 
-  console.log(`📥 JOIN REQUEST: ${name} for room ${room}. ID: ${requestId} [Device: ${deviceType}]`);
+  console.log(`📥 JOIN REQUEST: ${name} for room ${room}. ID: ${requestId} [Device: ${deviceType}] [Lang: ${preferredLanguage || "en"}]`);
   res.json({ requestId });
 });
 
@@ -189,7 +194,7 @@ app.post("/admit-student", async (req, res) => {
 
   try {
     // Generate token for the student
-    const metadata = { role: "student", device: request.deviceType || "Laptop" };
+    const metadata = { role: "student", device: request.deviceType || "Laptop", preferredLanguage: request.preferredLanguage || "en" };
     const at = new AccessToken(
       process.env.LIVEKIT_API_KEY,
       process.env.LIVEKIT_API_SECRET,
@@ -254,7 +259,7 @@ app.post("/remove-participant", async (req, res) => {
 
 app.post("/token", async (req, res) => {
   try {
-    const { name, room, role, className, topic } = req.body;
+    const { name, room, role, className, topic, preferredLanguage } = req.body;
     console.log("📥 TOKEN REQUEST BODY:", req.body);
 
     if (!name || !room || !role) {
@@ -270,7 +275,7 @@ app.post("/token", async (req, res) => {
     }
 
     // Build metadata object
-    const metadata = { role };
+    const metadata = { role, preferredLanguage: preferredLanguage || "en" };
 
     // Add className and topic if provided (for teachers)
     if (className) metadata.className = className;
@@ -315,7 +320,7 @@ app.post("/token", async (req, res) => {
 
 app.post("/ask-ai", async (req, res) => {
   try {
-    const { question, studentName, topic } = req.body;
+    const { question, studentName, topic, preferredLanguage } = req.body;
 
     if (!question) {
       return res.status(400).json({ error: "Question is required" });
@@ -324,6 +329,16 @@ app.post("/ask-ai", async (req, res) => {
     const student = studentName || "student";
     // Default to "this specific ongoing technical class session" if empty so the prompt still rejects obvious completely unrelated stuff.
     const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
+    const languageMap = {
+      'ta': 'Tamil',
+      'hi': 'Hindi',
+      'ml': 'Malayalam',
+      'te': 'Telugu',
+      'kn': 'Kannada'
+    };
+    const langName = languageMap[preferredLanguage] || preferredLanguage;
+
+    const languageStr = preferredLanguage && preferredLanguage !== 'en' ? `You MUST answer in the following language: ${langName}.` : "You must answer in English.";
 
     console.log(`\n\n===========================================`);
     console.log(`[ASK-AI] Received Request for Student: ${student}`);
@@ -376,11 +391,12 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these three words: YES, NO, or IGNORE
           content:
             `You are a strict but friendly classroom Teacher. ${topicContext} ` +
             "RULES: " +
-            "1. Give a clear, direct answer to the student's question in plain English. " +
+            "1. Give a clear, direct answer to the student's question. " +
             "2. Never exceed 3 lines total. " +
             "3. Never use 'Namaste', 'Ji', or any cultural/regional words. " +
             "4. Never use filler openers like 'Great question!' or 'Of course!'. " +
-            "5. Go straight to the point.",
+            "5. Go straight to the point. " +
+            languageStr,
         },
         {
           role: "user",
@@ -388,7 +404,7 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these three words: YES, NO, or IGNORE
         },
       ],
       temperature: 0.4,
-      max_tokens: 120,
+      max_tokens: 150,
     });
 
     const answer = completion.choices[0]?.message?.content;
