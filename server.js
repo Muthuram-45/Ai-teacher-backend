@@ -330,16 +330,34 @@ app.post("/ask-ai", async (req, res) => {
     const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
     const safeClassName = (className && className.trim() !== "") ? className.trim() : "General";
     const classContext = `Class: ${safeClassName}, Topic: ${safeTopic}`;
-    const thanglishPrompt = `Natural conversational Thanglish (Tamil-English mix).
-REQUIRED BEHAVIOR:
-- The ENTIRE answer MUST be in Thanglish. NEVER switch back to full English sentences at any point.
-- Use Latin script ONLY (e.g. "Innaiku namma learn panna porom"). NEVER use Tamil script (e.g. "இன்று").
-- Naturally mix Tamil grammar with English vocabulary.
-- Keep technical and classroom terms in English without adding unnecessary Tamil suffixes (e.g. use "evidence", not "evidence-a"; use "conclusion", not "conclusion-a").
-- Avoid literal translation and overly formal Tamil.
-- Make it sound like a real Tamil teacher explaining a concept naturally.
-Example 1: "Logical reasoning na, eppadi sariyaana evidence vechu correct-ana conclusion-ku varathu nu pakkaradhu. Idhula namma information-a analyze panni, patterns identify panni, oru correct-ana mudivukku varuvom."
-Example 2: "Innaiku namma photosynthesis pathi learn panna porom."`;
+    const thanglishPrompt = `EXTREMELY CASUAL, NATURAL THANGLISH (Tamil-English mix).
+
+CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
+- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
+- It is STRICTLY FORBIDDEN to use even a single Tamil character (e.g. அ, இ, த, ம்). If you use Tamil letters, the text-to-speech engine will crash.
+
+CRITICAL TONE & VOCABULARY RULES:
+- Write exactly how a modern, urban college student or tech professional in Chennai would speak naturally.
+- Use English words for most nouns, verbs, and adjectives. Only use Tamil for sentence structure, conjunctions, and helping verbs (e.g., "use pannuvom", "understand aagum", "solve panna", "run aagudhu").
+- NEVER use formal, literary, or pure Tamil words (e.g., avoid "seyyappadugirathu", "koodiyathu", "karanamaga", "aagum").
+- Keep technical terms 100% in pure English without any Tamil suffixes (e.g., say "conclusion", NOT "conclusion-a"; say "evidence", NOT "evidence-a").
+- The tone should be highly conversational, relaxed, and direct.
+
+FEW-SHOT EXAMPLES:
+Question: "What is an array?"
+Answer: "Array na, multiple values-a single variable-la store panna use aagura oru data structure. Idhula items ellam contigous memory locations-la irukkum. Index vechu easy-a elements access pannalam."
+
+Question: "Explain object oriented programming"
+Answer: "Object oriented programming, or OOPs, na real-world entities-a objects madhiri treat panni code pandra style. Idhula classes and objects use panni code write pannuvom. Main concepts vandhu inheritance, polymorphism, encapsulation mari irukkum."
+
+Question: "What is logical reasoning?"
+Answer: "Logical reasoning na, sariyaana evidence vechu correct conclusion epdi kondu varathu nu pakkaradhu. Idhula namma information analyze panni, pattern identify panni, correct mudivu eduppom."
+
+Question: "Why is water wet?"
+Answer: "Water yean wet-a irukku na, adhu liquid state-la irukkum pothu objects mela stick aagura property irukku. Idhu cohesion and adhesion nu solluvaanga."
+
+Question: "What is the capital of France?"
+Answer: "France oda capital Paris. Idhu rumba famous-ana city, and Eiffel Tower anga dhaan irukku."`;
 
     const languageMap = {
       'ta': thanglishPrompt,
