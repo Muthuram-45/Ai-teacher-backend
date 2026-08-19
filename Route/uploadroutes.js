@@ -3,10 +3,10 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
-const Groq = require("groq-sdk");
+const { GoogleGenAI } = require("@google/genai");
 
-const groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY,
+const client = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
 });
 
 const router = express.Router();
@@ -97,12 +97,15 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`🎵 Extracting audio...`);
     await execPromise(`ffmpeg -i "${mergedVideoPath}" -vn -ab 128k -ar 44100 -y "${audioPath}"`);
 
-    console.log(`📝 Sending to Groq for transcription...`);
-    const audioTranscription = await groq.audio.transcriptions.create({
-        file: fs.createReadStream(audioPath),
-        model: "whisper-large-v3",
-        response_format: "text",
+    console.log(`📝 Sending to Gemini for transcription...`);
+    const uploadResult = await client.files.upload({ file: audioPath });
+    const transcriptionCompletion = await client.interactions.create({
+        model: "gemini-3.6-flash",
+        system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
+        input: uploadResult
     });
+    
+    const audioTranscription = transcriptionCompletion.output_text || "";
 
     // 📖 Combine with Chat History
     let fullTranscript = `--- SPOKEN AUDIO TRANSCRIPT ---\n${audioTranscription}\n\n`;
@@ -127,21 +130,13 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`✅ Final transcription/chat log saved to ${transcriptionPath}`);
 
     console.log(`🤖 Generating summary...`);
-    const completion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [
-            {
-                role: "system",
-                content: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists."
-            },
-            {
-                role: "user",
-                content: fullTranscript
-            }
-        ],
+    const completion = await client.interactions.create({
+        model: "gemini-3.6-flash",
+        system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
+        input: fullTranscript
     });
 
-    const summary = completion.choices[0]?.message?.content || "No summary generated.";
+    const summary = completion.output_text || "No summary generated.";
     const summaryPath = path.join(directory, "summary.txt");
     fs.writeFileSync(summaryPath, summary);
     console.log(`✅ Summary saved to ${summaryPath}`);

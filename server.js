@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
-const Groq = require("groq-sdk");
+const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -61,8 +61,8 @@ app.get("/api/tts", async (req, res) => {
   }
 });
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
+const client = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
 const roomService = new RoomServiceClient(
@@ -320,17 +320,29 @@ app.post("/token", async (req, res) => {
 
 app.post("/ask-ai", async (req, res) => {
   try {
-    const { question, studentName, topic, preferredLanguage } = req.body;
+    const { question, studentName, topic, className, preferredLanguage } = req.body;
 
     if (!question) {
       return res.status(400).json({ error: "Question is required" });
     }
 
     const student = studentName || "student";
-    // Default to "this specific ongoing technical class session" if empty so the prompt still rejects obvious completely unrelated stuff.
     const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
+    const safeClassName = (className && className.trim() !== "") ? className.trim() : "General";
+    const classContext = `Class: ${safeClassName}, Topic: ${safeTopic}`;
+    const thanglishPrompt = `Natural conversational Thanglish (Tamil-English mix).
+REQUIRED BEHAVIOR:
+- The ENTIRE answer MUST be in Thanglish. NEVER switch back to full English sentences at any point.
+- Use Latin script ONLY (e.g. "Innaiku namma learn panna porom"). NEVER use Tamil script (e.g. "இன்று").
+- Naturally mix Tamil grammar with English vocabulary.
+- Keep technical and classroom terms in English without adding unnecessary Tamil suffixes (e.g. use "evidence", not "evidence-a"; use "conclusion", not "conclusion-a").
+- Avoid literal translation and overly formal Tamil.
+- Make it sound like a real Tamil teacher explaining a concept naturally.
+Example 1: "Logical reasoning na, eppadi sariyaana evidence vechu correct-ana conclusion-ku varathu nu pakkaradhu. Idhula namma information-a analyze panni, patterns identify panni, oru correct-ana mudivukku varuvom."
+Example 2: "Innaiku namma photosynthesis pathi learn panna porom."`;
+
     const languageMap = {
-      'ta': 'Tamil',
+      'ta': thanglishPrompt,
       'hi': 'Hindi',
       'ml': 'Malayalam',
       'te': 'Telugu',
@@ -338,7 +350,7 @@ app.post("/ask-ai", async (req, res) => {
     };
     const langName = languageMap[preferredLanguage] || preferredLanguage;
 
-    const languageStr = preferredLanguage && preferredLanguage !== 'en' ? `You MUST answer in the following language: ${langName}.` : "You must answer in English.";
+    const languageStr = preferredLanguage && preferredLanguage !== 'en' ? `You MUST answer in the following language: \n${langName}\n` : "You must answer in English.";
 
     console.log(`\n\n===========================================`);
     console.log(`[ASK-AI] Received Request for Student: ${student}`);
@@ -346,26 +358,23 @@ app.post("/ask-ai", async (req, res) => {
     console.log(`[ASK-AI] Question: "${question}"`);
 
     // 🧠 1. Strict Validation
-    const validationPrompt = `Evaluate the following student input based on the current class topic: "${safeTopic}".
+    const validationPrompt = `Evaluate the following student transcript statement based on the class context: "${classContext}".
     
 Input: "${question}"
 
 RULES:
-1. Identify if the input is actually an academic question or doubt. If the input is just a greeting (e.g., "Hi", "Hello", "Good morning"), an acknowledgement ("Thank you", "Sorry"), random text (e.g., "asdfg"), or any non-question casual message, reply with EXACTLY the word "IGNORE".
-2. If it is a valid question, evaluate if it is STRICTLY and DIRECTLY related to the core focus of the class topic.
-3. If it is related, reply with EXACTLY the word "YES".
-4. If it deviates into other domains, out of scope, tangentially related, or is completely unrelated (e.g., asking about different subjects, other technologies, or general knowledge), reply with EXACTLY the word "NO".
+1. Identify if the input is actually an academic question or doubt. If the input is just a greeting (e.g., "Hi", "Hello"), an acknowledgement ("Thank you"), random text, or a non-question casual message, reply with IGNORE.
+2. If it is a valid question, evaluate if it is reasonably related to the class context.
+3. If it is related, reply with YES.
+4. If it is completely unrelated to the class context, reply with NO.`;
 
-OUTPUT NOTHING ELSE. Choose exactly ONE of these three words: YES, NO, or IGNORE.`;
-
-    const validationResponse = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [{ role: "user", content: validationPrompt }],
-      temperature: 0.0,
-      max_tokens: 10,
+    const validationResponse = await client.interactions.create({
+      model: "gemini-3.5-flash-lite",
+      system_instruction: "You are a strict validation bot. You MUST output exactly ONE WORD from this list: [YES, NO, IGNORE]. Do not write any explanations or conversational text.",
+      input: validationPrompt,
     });
 
-    const isRelatedRaw = validationResponse.choices[0]?.message?.content?.trim() || "";
+    const isRelatedRaw = validationResponse.output_text?.trim() || "";
     const isRelated = isRelatedRaw.toUpperCase();
     console.log(`[ASK-AI] Validation LLM replied: "${isRelatedRaw}"`);
 
@@ -376,38 +385,30 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these three words: YES, NO, or IGNORE
 
     if (isRelated.includes("NO") || !isRelated.includes("YES")) {
       console.log(`[ASK-AI] Rejected question as out-of-topic.`);
-      return res.json({ answer: `${student}, kindly ask questions related to our subject.` });
+      return res.json({ answer: `${student}, this question is out of syllabus.` });
     }
 
     console.log(`[ASK-AI] Proceeding to Answer Generation...`);
     // 🤖 2. Answer the Question
-    const topicContext = `The current class topic is: "${safeTopic}".`;
+    const topicContext = `The current class context is: "${classContext}".`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            `You are a strict but friendly classroom Teacher. ${topicContext} ` +
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: `You are a strict but friendly classroom Teacher. ${topicContext} ` +
             "RULES: " +
             "1. Give a clear, direct answer to the student's question. " +
-            "2. Never exceed 3 lines total. " +
+            "2. Provide a detailed but concise explanation (around 3 to 5 sentences). " +
             "3. Never use 'Namaste', 'Ji', or any cultural/regional words. " +
             "4. Never use filler openers like 'Great question!' or 'Of course!'. " +
             "5. Go straight to the point. " +
+            "6. Use the EXACT technical terms the student asked about instead of substituting them with synonyms. " +
+            `7. You MUST start your answer by addressing the student by their name: '${student}' (e.g. '${student}, logical reasoning is...'). ` +
             languageStr,
-        },
-        {
-          role: "user",
-          content: question,
-        },
-      ],
-      temperature: 0.4,
-      max_tokens: 150,
+      input: question,
     });
 
-    const answer = completion.choices[0]?.message?.content;
+    const answer = completion.output_text;
+    console.log(`[ASK-AI] Answer generated:\n${answer}\n`);
 
     res.json({ answer });
   } catch (err) {
@@ -446,23 +447,14 @@ Transcript:
 
 Extracted Question:`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You extract core questions from classroom dialogue. Return only the extracted question text, or an empty string if none found.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.1,
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: "You extract core questions from classroom dialogue. Return only the extracted question text, or an empty string if none found.",
+      input: prompt,
+      generation_config: { temperature: 0.1 },
     });
 
-    const extractedQuestion = completion.choices[0]?.message?.content
+    const extractedQuestion = completion.output_text
       ?.trim()
       .replace(/^"|"$/g, "");
 
@@ -513,25 +505,15 @@ Return ONLY a valid JSON array in this exact format, with no additional text:
 
 The correctAnswer should be the index (0-3) of the correct option.`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a quiz generator. Return only valid JSON arrays with no additional text or formatting.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: "You are a quiz generator. Return only valid JSON arrays with no additional text or formatting.",
+      input: prompt,
     });
 
     let quizQuestions;
     try {
-      const responseText = completion.choices[0]?.message?.content.trim();
+      const responseText = completion.output_text?.trim();
       // Remove markdown code blocks if present
       const jsonText = responseText
         .replace(/```json\n?/g, "")
@@ -612,25 +594,15 @@ Return ONLY a valid JSON object in this exact format, with no additional text or
 
 The correctAnswer should be the index (0-2) of the correct option.`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a question generator. Return only a valid JSON object with no additional text or formatting.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.7,
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: "You are a question generator. Return only a valid JSON object with no additional text or formatting.",
+      input: prompt,
     });
 
     let questionObj;
     try {
-      const responseText = completion.choices[0]?.message?.content.trim();
+      const responseText = completion.output_text?.trim();
       const jsonText = responseText
         .replace(/```json\n?/g, "")
         .replace(/```\n?/g, "")
@@ -857,15 +829,13 @@ RULES:
 
 OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
 
-    const validationResponse = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [{ role: "user", content: validationPrompt }],
-      temperature: 0.0,
-      max_tokens: 10,
+    const validationResponse = await client.interactions.create({
+      model: "gemini-3.5-flash-lite",
+      input: validationPrompt,
     });
 
     const validationResult =
-      validationResponse.choices[0]?.message?.content?.trim()?.toUpperCase() ||
+      validationResponse.output_text?.trim()?.toUpperCase() ||
       "";
     console.log(
       `[ENCOURAGE-STUDENT] Validation result for "${question}": "${validationResult}"`,
@@ -886,24 +856,15 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
     3. Use "doubt" instead of "question" where appropriate.
     4. Return ONLY the encouraging statement.`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.8,
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
+      input: prompt,
+      generation_config: { temperature: 0.8 },
     });
 
     const encouragement =
-      completion.choices[0]?.message?.content.trim() ||
+      completion.output_text?.trim() ||
       `Good question, ${name}!`;
 
     res.json({ encouragement });
@@ -938,24 +899,15 @@ Rules:
 4. Use terms like "doubts cleared" instead of "questions answered".
 5. Return ONLY the summary text.`;
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.5,
+    const completion = await client.interactions.create({
+      model: "gemini-3.6-flash",
+      system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
+      input: prompt,
+      generation_config: { temperature: 0.5 },
     });
 
     const summary =
-      completion.choices[0]?.message?.content.trim() || "No summary available.";
+      completion.output_text?.trim() || "No summary available.";
 
     res.json({ summary });
   } catch (err) {
