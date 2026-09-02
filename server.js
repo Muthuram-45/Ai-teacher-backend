@@ -781,23 +781,32 @@ app.post("/generate-quiz", async (req, res) => {
         ? `\n\nStudent questions during the session:\n${studentQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
         : "";
 
-    const prompt = `You are an educational quiz generator. Generate a quiz with 5-10 multiple choice questions based on the following topic and student questions.
+    const prompt = `You are an educational quiz generator. Generate a quiz with 8-10 multiple choice questions based on the following topic and student questions.
 
 Topic: ${topic}${questionsContext}
 
 Generate questions that:
 1. Cover the main topic comprehensively
 2. Address concepts from student questions if provided
-3. Have 4 options each (A, B, C, D)
+3. Have exactly 4 options each
 4. Have exactly one correct answer
 5. Are educational and appropriate
+6. For each question, provide translations in Tamil (ta), Hindi (hi), Telugu (te), Malayalam (ml), and Kannada (kn). 
+   CRITICAL: Do NOT use pure, formal, or highly literary translations. Use conversational, colloquial language (e.g., Tanglish style but in Tamil script, Hinglish in Hindi script). Keep all technical programming terms and common English words in English.
 
 Return ONLY a valid JSON array in this exact format, with no additional text:
 [
   {
     "question": "Question text here?",
     "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correctAnswer": 0
+    "correctAnswer": 0,
+    "translations": {
+      "ta": { "question": "Tamil Q?", "options": ["Opt A", "Opt B", "Opt C", "Opt D"] },
+      "hi": { "question": "Hindi Q?", "options": ["Opt A", "Opt B", "Opt C", "Opt D"] },
+      "te": { "question": "Telugu Q?", "options": ["Opt A", "Opt B", "Opt C", "Opt D"] },
+      "ml": { "question": "Malayalam Q?", "options": ["Opt A", "Opt B", "Opt C", "Opt D"] },
+      "kn": { "question": "Kannada Q?", "options": ["Opt A", "Opt B", "Opt C", "Opt D"] }
+    }
   }
 ]
 
@@ -805,7 +814,7 @@ The correctAnswer should be the index (0-3) of the correct option.`;
 
     const completion = await client.interactions.create({
       model: "gemini-3.5-flash",
-      system_instruction: "You are a quiz generator. Return only valid JSON arrays with no additional text or formatting.",
+      system_instruction: "You are a quiz generator and translator. Return only valid JSON arrays with no additional text or formatting.",
       input: prompt,
     });
 
@@ -818,6 +827,7 @@ The correctAnswer should be the index (0-3) of the correct option.`;
         .replace(/```\n?/g, "")
         .trim();
       quizQuestions = JSON.parse(jsonText);
+      console.log("DEBUG: Parsed Quiz Questions from Gemini:", JSON.stringify(quizQuestions, null, 2));
 
       if (!Array.isArray(quizQuestions)) {
         throw new Error("AI did not return a JSON array");
@@ -851,6 +861,7 @@ The correctAnswer should be the index (0-3) of the correct option.`;
         id: idx,
         question: q.question,
         options: q.options,
+        translations: q.translations,
       })),
     });
   } catch (err) {
