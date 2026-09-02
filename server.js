@@ -336,9 +336,10 @@ CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
 - You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
 - It is STRICTLY FORBIDDEN to use even a single Tamil character (e.g. அ, இ, த, ம்). If you use Tamil letters, the text-to-speech engine will crash.
 
-CRITICAL TONE & VOCABULARY RULES:
+CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Chennai would speak naturally.
 - Use English words for most nouns, verbs, and adjectives. Only use Tamil for sentence structure, conjunctions, and helping verbs (e.g., "use pannuvom", "understand aagum", "solve panna", "run aagudhu").
+- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
 - NEVER use formal, literary, or pure Tamil words (e.g., avoid "seyyappadugirathu", "koodiyathu", "karanamaga", "aagum").
 - Keep technical terms 100% in pure English without any Tamil suffixes (e.g., say "conclusion", NOT "conclusion-a"; say "evidence", NOT "evidence-a").
 - The tone should be highly conversational, relaxed, and direct.
@@ -359,12 +360,72 @@ Answer: "Water yean wet-a irukku na, adhu liquid state-la irukkum pothu objects 
 Question: "What is the capital of France?"
 Answer: "France oda capital Paris. Idhu rumba famous-ana city, and Eiffel Tower anga dhaan irukku."`;
 
+    const hinglishPrompt = `EXTREMELY CASUAL, NATURAL HINGLISH (Hindi-English mix).
+CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
+- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
+- It is STRICTLY FORBIDDEN to use even a single Hindi character. If you use Hindi letters, the text-to-speech engine will crash.
+CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
+- Write exactly how a modern, urban college student or tech professional in Delhi would speak naturally.
+- Use English words for most nouns, verbs, and adjectives. Only use Hindi for sentence structure, conjunctions, and helping verbs.
+- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- NEVER use formal, literary, or pure Hindi words.
+- Keep technical terms 100% in pure English without any Hindi suffixes.
+- The tone should be highly conversational, relaxed, and direct.
+FEW-SHOT EXAMPLES:
+Question: "What is an array?"
+Answer: "Array matlab, multiple values ko ek single variable mein store karne ke liye use hone wala data structure. Ismein items contiguous memory locations par hote hain. Index ka use karke elements ko easily access kar sakte hain."`;
+
+    const tenglishPrompt = `EXTREMELY CASUAL, NATURAL TENGLISH (Telugu-English mix).
+CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
+- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
+- It is STRICTLY FORBIDDEN to use even a single Telugu character.
+CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
+- Write exactly how a modern, urban college student or tech professional in Hyderabad would speak naturally.
+- Use English words for most nouns, verbs, and adjectives. Only use Telugu for sentence structure, conjunctions, and helping verbs.
+- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- NEVER use formal, literary, or pure Telugu words.
+- Keep technical terms 100% in pure English without any Telugu suffixes.
+- The tone should be highly conversational, relaxed, and direct.
+FEW-SHOT EXAMPLES:
+Question: "What is an array?"
+Answer: "Array ante, multiple values ni single variable lo store cheyadaniki use chese data structure. Indulo items anni contiguous memory locations lo untayi. Index use chesi elements ni easily access cheyochu."`;
+
+    const kanglishPrompt = `EXTREMELY CASUAL, NATURAL KANGLISH (Kannada-English mix).
+CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
+- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
+- It is STRICTLY FORBIDDEN to use even a single Kannada character.
+CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
+- Write exactly how a modern, urban college student or tech professional in Bangalore would speak naturally.
+- Use English words for most nouns, verbs, and adjectives. Only use Kannada for sentence structure, conjunctions, and helping verbs.
+- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- NEVER use formal, literary, or pure Kannada words.
+- Keep technical terms 100% in pure English without any Kannada suffixes.
+- The tone should be highly conversational, relaxed, and direct.
+FEW-SHOT EXAMPLES:
+Question: "What is an array?"
+Answer: "Array andre, multiple values na single variable nalli store madakke use mado data structure. Idrali items ella contiguous memory locations nalli iruthe. Index use madi elements na easily access madbahudu."`;
+
+    const manglishPrompt = `EXTREMELY CASUAL, NATURAL MANGLISH (Malayalam-English mix).
+CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
+- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
+- It is STRICTLY FORBIDDEN to use even a single Malayalam character.
+CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
+- Write exactly how a modern, urban college student or tech professional in Kochi would speak naturally.
+- Use English words for most nouns, verbs, and adjectives. Only use Malayalam for sentence structure, conjunctions, and helping verbs.
+- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- NEVER use formal, literary, or pure Malayalam words.
+- Keep technical terms 100% in pure English without any Malayalam suffixes.
+- The tone should be highly conversational, relaxed, and direct.
+FEW-SHOT EXAMPLES:
+Question: "What is an array?"
+Answer: "Array ennal, multiple values oru single variable-il store cheyan use cheyunna data structure aanu. Ithil items contiguous memory locations-il aayirikkum. Index use cheythu elements easily access cheyam."`;
+
     const languageMap = {
       'ta': thanglishPrompt,
-      'hi': 'Hindi',
-      'ml': 'Malayalam',
-      'te': 'Telugu',
-      'kn': 'Kannada'
+      'hi': hinglishPrompt,
+      'ml': manglishPrompt,
+      'te': tenglishPrompt,
+      'kn': kanglishPrompt
     };
     const langName = languageMap[preferredLanguage] || preferredLanguage;
 
@@ -630,7 +691,7 @@ For \`IGNORE\`:
     const topicContext = `The current class context is: "${classContext}".`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: `You are a strict but friendly classroom Teacher. ${topicContext} ` +
             "RULES: " +
             "1. Give a clear, direct answer to the student's question. " +
@@ -685,7 +746,7 @@ Transcript:
 Extracted Question:`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: "You extract core questions from classroom dialogue. Return only the extracted question text, or an empty string if none found.",
       input: prompt,
       generation_config: { temperature: 0.1 },
@@ -743,7 +804,7 @@ Return ONLY a valid JSON array in this exact format, with no additional text:
 The correctAnswer should be the index (0-3) of the correct option.`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: "You are a quiz generator. Return only valid JSON arrays with no additional text or formatting.",
       input: prompt,
     });
@@ -832,7 +893,7 @@ Return ONLY a valid JSON object in this exact format, with no additional text or
 The correctAnswer should be the index (0-2) of the correct option.`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: "You are a question generator. Return only a valid JSON object with no additional text or formatting.",
       input: prompt,
     });
@@ -1094,7 +1155,7 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
     4. Return ONLY the encouraging statement.`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
       input: prompt,
       generation_config: { temperature: 0.8 },
@@ -1137,7 +1198,7 @@ Rules:
 5. Return ONLY the summary text.`;
 
     const completion = await client.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-3.5-flash",
       system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
       input: prompt,
       generation_config: { temperature: 0.5 },

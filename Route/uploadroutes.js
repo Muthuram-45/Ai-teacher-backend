@@ -100,7 +100,7 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`📝 Sending to Gemini for transcription...`);
     const uploadResult = await client.files.upload({ file: audioPath });
     const transcriptionCompletion = await client.interactions.create({
-        model: "gemini-3.6-flash",
+        model: "gemini-3.5-flash",
         system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
         input: uploadResult
     });
@@ -131,7 +131,7 @@ async function processTranscription(directory, sessionId, className) {
 
     console.log(`🤖 Generating summary...`);
     const completion = await client.interactions.create({
-        model: "gemini-3.6-flash",
+        model: "gemini-3.5-flash",
         system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
         input: fullTranscript
     });
