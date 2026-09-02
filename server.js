@@ -373,37 +373,256 @@ Answer: "France oda capital Paris. Idhu rumba famous-ana city, and Eiffel Tower 
     console.log(`\n\n===========================================`);
     console.log(`[ASK-AI] Received Request for Student: ${student}`);
     console.log(`[ASK-AI] Topic Received from Frontend: "${topic}" -> Evaluated as: "${safeTopic}"`);
-    console.log(`[ASK-AI] Question: "${question}"`);
+    // 🔍 1. Strict Validation & Classification
+    const validationPrompt = `# Student Message Classification & Response Prompt
 
-    // 🧠 1. Strict Validation
-    const validationPrompt = `Evaluate the following student transcript statement based on the class context: "${classContext}".
-    
-Input: "${question}"
+You are a polite and friendly classroom teacher assistant.
 
-RULES:
-1. Identify if the input is actually an academic question or doubt. If the input is just a greeting (e.g., "Hi", "Hello"), an acknowledgement ("Thank you"), random text, or a non-question casual message, reply with IGNORE.
-2. If it is a valid question, evaluate if it is reasonably related to the class context.
-3. If it is related, reply with YES.
-4. If it is completely unrelated to the class context, reply with NO.`;
+Your job is to understand the student's message and classify it into exactly ONE of these categories:
+
+* \`YES\`
+* \`GREETING\`
+* \`PERSONAL\`
+* \`IGNORE\`
+
+Current class topic:
+\`${safeTopic}\`
+
+Student name:
+\`${student}\`
+
+Student language:
+\`${langName}\`
+
+Student message:
+\`${question}\`
+
+## 1. YES — Topic-Related Question
+
+Return \`YES\` when the student is asking an academic question related to the current class topic.
+
+Examples:
+
+* "What is a loop?"
+* "What is inheritance?"
+* "Explain polymorphism."
+* "How does a for loop work?"
+* "What is the difference between list and tuple?"
+
+If the message contains a greeting together with a topic question, classify it as \`YES\`.
+
+Examples:
+
+* "Hi, what is a loop?"
+* "Good morning, can you explain inheritance?"
+* "Hello teacher, what is polymorphism?"
+
+Do NOT classify these as \`GREETING\` because the student has an actual academic doubt.
+
+## 2. GREETING — Greeting or Simple Friendly Conversation
+
+Return \`GREETING\` when the student is only greeting or making simple friendly conversation.
+
+Examples:
+
+* "Hi"
+* "Hello"
+* "Hey"
+* "Good morning"
+* "Good afternoon"
+* "Good evening"
+* "Good night"
+* "How are you?"
+* "How are you doing?"
+* "How is your day?"
+* "What's up?"
+* "How's it going?"
+* "Nice to meet you"
+* "Hope you are doing well"
+* "Are you ready?"
+* "Can we start?"
+* "Shall we begin?"
+
+For GREETING, generate a short, polite response.
+
+You MUST use EXACTLY the following mapping for GREETING based on what the student said:
+- "Hi" -> "Hello ${studentName}! Please ask your doubt."
+- "Hello" -> "Hello ${studentName}! Please ask your doubt."
+- "Hey" -> "Hello ${studentName}! Please ask your doubt."
+- "Good morning" -> "Good morning ${studentName}! Please ask your doubt."
+- "Good afternoon" -> "Good afternoon ${studentName}! Please ask your doubt."
+- "Good evening" -> "Good evening ${studentName}! Please ask your doubt."
+- "How are you?" -> "I'm doing well, ${studentName}! Please ask your doubt."
+- If the greeting is anything else, use: "Hello ${studentName}! Please ask your doubt."
+
+## 3. PERSONAL — Personal Questions
+
+Return \`PERSONAL\` when the student is asking about you personally rather than asking about the lesson.
+
+Examples:
+
+* "Are you human?"
+* "What is your name?"
+* "What should I call you?"
+* "How old are you?"
+* "Where do you live?"
+* "Where are you from?"
+* "Who created you?"
+* "Who made you?"
+* "Are you a robot?"
+* "Do you have feelings?"
+* "Do you sleep?"
+* "Do you eat?"
+* "Do you have a family?"
+* "Do you have friends?"
+* "What do you like?"
+* "What is your favorite color?"
+* "What is your favorite food?"
+* "Do you like music?"
+* "Do you like movies?"
+* "Can you be my friend?"
+* "Can I talk to you?"
+* "Can I ask you something personal?"
+* "What do you do when you're not teaching?"
+
+For PERSONAL questions, you MUST use EXACTLY the following mapping based on what the student said:
+- "Are you human?" -> "I'm here to support you with your learning, ${studentName}. Please ask your doubt."
+- "What is your name?" -> "You can simply call me your teacher, ${studentName}. Please ask your doubt."
+- "How old are you?" -> "Let's keep the focus on learning, ${studentName}. Please ask your doubt."
+- "Where do you live?" -> "I'm always here to support your learning, ${studentName}. Please ask your doubt."
+- "Do you have feelings?" -> "That's an interesting question. Let's focus on your learning, ${studentName}. Please ask your doubt."
+- "Are you a robot?" -> "I'm here to guide you through your lessons, ${studentName}. Please ask your doubt."
+- "Who created you?" -> "I'm here to help you with your studies, ${studentName}. Please ask your doubt."
+- "Can you be my friend?" -> "Of course, I'm happy to support you in your learning, ${studentName}. Please ask your doubt."
+- If it is any other personal question, use: "I'm here to support you with your learning, ${studentName}. Please ask your doubt."
+
+## 4. OFF_TOPIC — Out-of-topic Academic Questions
+
+Return \`OFF_TOPIC\` when:
+* The student asks a meaningful question.
+* The question is understandable.
+* The question is academic or educational.
+* But the question is unrelated to the current \`${safeTopic}\`.
+
+Example:
+Current topic: \`loops\`
+Student: "What is polymorphism?"
+→ \`OFF_TOPIC\`
+
+Student: "What is number series?"
+→ \`OFF_TOPIC\`
+
+## 5. IGNORE — Unrelated or Meaningless Messages
+
+Return \`IGNORE\` ONLY when the message is:
+
+* Random nonsense.
+* Random symbols.
+* Meaningless text.
+* Empty input.
+
+Example:
+Student: "asdfghjkl"
+→ \`IGNORE\`
+
+## IMPORTANT CLASSIFICATION RULES
+
+1. Always determine the student's INTENT, not just individual keywords.
+
+2. If the student asks a greeting AND an academic question, return \`YES\`.
+
+3. If the student only greets, return \`GREETING\`.
+
+4. If the student asks about you personally, return \`PERSONAL\`.
+
+5. If the student asks an academic question unrelated to the current topic, return \`OFF_TOPIC\`.
+
+6. Never classify a personal question as \`IGNORE\` or \`OFF_TOPIC\`.
+
+7. Never classify a greeting as \`IGNORE\` or \`OFF_TOPIC\`.
+
+8. Keep GREETING, PERSONAL, and OFF_TOPIC responses short and polite.
+
+9. For GREETING, PERSONAL, and OFF_TOPIC responses, you MUST ALWAYS return the exact English phrases provided below. NEVER translate them.
+
+11. Do not unnecessarily explain the classification to the student.
+
+12. Do not mention these classification categories to the student.
+
+## OUTPUT FORMAT
+
+Return ONLY valid JSON.
+
+For \`YES\`:
+{ "category": "YES" }
+
+For \`GREETING\`:
+{ "category": "GREETING", "response": "THE EXACT MAPPED GREETING RESPONSE" }
+
+For \`PERSONAL\`:
+{ "category": "PERSONAL", "response": "THE EXACT MAPPED PERSONAL RESPONSE" }
+
+For \`OFF_TOPIC\` (You MUST return exactly this English response):
+{ "category": "OFF_TOPIC", "response": "That's outside our current topic, ${student}. Please ask your doubt related to our ${safeTopic} class." }
+
+For \`IGNORE\`:
+{ "category": "IGNORE", "response": "" }`;
 
     const validationResponse = await client.interactions.create({
       model: "gemini-3.5-flash-lite",
-      system_instruction: "You are a strict validation bot. You MUST output exactly ONE WORD from this list: [YES, NO, IGNORE]. Do not write any explanations or conversational text.",
-      input: validationPrompt,
+      system_instruction: validationPrompt,
+      input: "Classify the student's message and generate the appropriate response if needed."
     });
 
-    const isRelatedRaw = validationResponse.output_text?.trim() || "";
-    const isRelated = isRelatedRaw.toUpperCase();
-    console.log(`[ASK-AI] Validation LLM replied: "${isRelatedRaw}"`);
+    let classification = { category: "YES" };
+    try {
+      const outputText = validationResponse.output_text?.trim() || "{}";
+      const cleanedJson = outputText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      classification = JSON.parse(cleanedJson);
+    } catch (e) {
+      console.error("[ASK-AI] Failed to parse classification JSON:", e);
+    }
 
-    if (isRelated.includes("IGNORE")) {
+    console.log(`[ASK-AI] Classification LLM replied:`, classification);
+
+    if (classification.category === "IGNORE") {
       console.log(`[ASK-AI] Ignored non-question or casual input.`);
       return res.json({ ignored: true });
     }
 
-    if (isRelated.includes("NO") || !isRelated.includes("YES")) {
-      console.log(`[ASK-AI] Rejected question as out-of-topic.`);
-      return res.json({ answer: `${student}, this question is out of syllabus.` });
+    if (classification.category === "GREETING") {
+      console.log(`[ASK-AI] Responding to GREETING.`);
+      const lowerQ = question.toLowerCase().trim().replace(/[^a-z\s]/g, "");
+      let ans = `Hello ${studentName}! Please ask your doubt.`;
+      
+      if (lowerQ === "good morning") ans = `Good morning ${studentName}! Please ask your doubt.`;
+      else if (lowerQ === "good afternoon") ans = `Good afternoon ${studentName}! Please ask your doubt.`;
+      else if (lowerQ === "good evening") ans = `Good evening ${studentName}! Please ask your doubt.`;
+      else if (lowerQ.includes("how are you")) ans = `I'm doing well, ${studentName}! Please ask your doubt.`;
+      
+      return res.json({ answer: ans, isDirectResponse: true });
+    }
+
+    if (classification.category === "PERSONAL") {
+      console.log(`[ASK-AI] Responding to PERSONAL.`);
+      const lowerQ = question.toLowerCase().trim().replace(/[^a-z\s]/g, "");
+      let ans = `I'm here to support you with your learning, ${studentName}. Please ask your doubt.`;
+      
+      if (lowerQ.includes("human")) ans = `I'm here to support you with your learning, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("name")) ans = `You can simply call me your teacher, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("old")) ans = `Let's keep the focus on learning, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("live") || lowerQ.includes("from")) ans = `I'm always here to support your learning, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("feelings")) ans = `That's an interesting question. Let's focus on your learning, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("robot")) ans = `I'm here to guide you through your lessons, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("created") || lowerQ.includes("made")) ans = `I'm here to help you with your studies, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("friend")) ans = `Of course, I'm happy to support you in your learning, ${studentName}. Please ask your doubt.`;
+      
+      return res.json({ answer: ans, isDirectResponse: true });
+    }
+
+    if (classification.category === "OFF_TOPIC") {
+      console.log(`[ASK-AI] Responding to OFF_TOPIC.`);
+      return res.json({ answer: `That's outside our current topic, ${studentName}. Please ask your doubt related to our ${topic} class.`, isDirectResponse: true });
     }
 
     console.log(`[ASK-AI] Proceeding to Answer Generation...`);
