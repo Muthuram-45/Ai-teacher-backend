@@ -1225,6 +1225,55 @@ Rules:
   }
 });
 
+// ========================================
+// 🎬 Video Generation Integration (proxy to VideoGenerator server)
+// ========================================
+const VIDEOGEN_API = process.env.VIDEOGEN_API_URL || 'http://localhost:5000';
+
+// Proxy: Trigger one-shot video generation
+app.post("/api/generate-video", async (req, res) => {
+  try {
+    const { topic, subTopic, durationMinutes, languages, voiceId } = req.body;
+
+    if (!topic) {
+      return res.status(400).json({ error: "Topic is required" });
+    }
+
+    console.log(`🎬 [VIDEO-GEN] Proxying one-shot request: topic="${topic}", subTopic="${subTopic || 'N/A'}", duration=${durationMinutes}min`);
+
+    const response = await fetch(`${VIDEOGEN_API}/api/generate/one-shot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic, subTopic, durationMinutes, languages, voiceId })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(`❌ [VIDEO-GEN] VideoGenerator returned error:`, data);
+      return res.status(response.status).json(data);
+    }
+
+    console.log(`✅ [VIDEO-GEN] Video generated successfully. ID: ${data.data?.id}`);
+    res.json(data);
+  } catch (err) {
+    console.error("❌ [VIDEO-GEN] Proxy error:", err);
+    res.status(500).json({ error: "Failed to generate video", details: err.message });
+  }
+});
+
+// Proxy: Get available voices from VideoGenerator
+app.get("/api/video-voices", async (req, res) => {
+  try {
+    const response = await fetch(`${VIDEOGEN_API}/api/voice/list`);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error("❌ [VIDEO-VOICES] Proxy error:", err);
+    res.status(500).json({ error: "Failed to fetch video voices", voices: [] });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Backend server running on http://localhost:${port}`);
 });
