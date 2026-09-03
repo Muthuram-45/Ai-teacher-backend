@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const { GoogleGenAI } = require("@google/genai");
+const textToSpeech = require('@google-cloud/text-to-speech');
+const ttsClient = new textToSpeech.TextToSpeechClient();
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -22,42 +24,45 @@ app.use("/api/auth", authRoutes);
 const multilingualRoutes = require("./Multilingual/translationGateway");
 app.use("/api/multilingual", multilingualRoutes);
 
-// 🔊 TTS Proxy to bypass CORS for recording
-app.get("/api/tts", async (req, res) => {
+// 🔊 TTS Endpoint using Google Cloud TTS
+app.post("/api/tts", async (req, res) => {
   try {
-    const text = req.query.text;
-    const lang = req.query.lang || 'en';
+    const text = req.body.text;
+    const lang = req.body.lang || 'en';
     if (!text) return res.status(400).send("Text is required");
 
-    // Google Translate TTS silently fails on long text — reject early
-    // if (text.length > 200) {
-    //   console.warn(`⚠️ TTS text too long (${text.length} chars). Split into shorter chunks first.`);
-    //   return res.status(400).send("Text too long. Split into chunks of ≤200 chars.");
-    // }
+    const localeMap = {
+      'en': 'en-IN',
+      'hi': 'hi-IN',
+      'ml': 'ml-IN',
+      'ta': 'ta-IN',
+      'te': 'te-IN',
+      'kn': 'kn-IN',
+      'en-IN': 'en-IN'
+    };
+    const locale = localeMap[lang] || lang;
+    const voiceType = activeVoice && activeVoice !== 'reference_voice.wav' ? activeVoice : 'Wavenet';
+    
+    // Construct request
+    const request = {
+      input: { text: text },
+      // Select the language and SSML voice gender (optional)
+      voice: { languageCode: locale, name: `${locale}-${voiceType}-${voiceType === 'Journey' ? 'F' : 'A'}` }, // fallback to wavenet
+      // select the type of audio encoding
+      audioConfig: { audioEncoding: 'MP3' },
+    };
 
-    const url = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=${lang}&q=${encodeURIComponent(text)}`;
-
-    // Add User-Agent to satisfy Google's protection
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      }
-    });
-
-    if (!response.ok) {
-      console.error(`❌ Google TTS responded with status: ${response.status}`);
-      throw new Error("Failed to fetch from Google TTS");
-    }
-
-    const buffer = await response.arrayBuffer();
-    console.log(`✅ [TTS] Successfully proxied: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
+    // Performs the text-to-speech request
+    const [response] = await ttsClient.synthesizeSpeech(request);
+    
+    console.log(`✅ [TTS] Successfully synthesized: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
 
     res.set("Content-Type", "audio/mpeg");
     res.set("Access-Control-Allow-Origin", "*"); // explicitly allow for recording mix
-    res.send(Buffer.from(buffer));
+    res.send(response.audioContent);
   } catch (err) {
-    console.error("❌ TTS Proxy Error:", err);
-    res.status(500).send("TTS Proxy failed");
+    console.error("❌ Google Cloud TTS Error:", err);
+    res.status(500).send("Google Cloud TTS failed");
   }
 });
 
@@ -91,22 +96,8 @@ const VOICES_DIR = path.join(__dirname, "..", "Ai-teacher-voicemodel", "voices")
 // Voice Management Endpoints
 app.get("/list-voices", (req, res) => {
   try {
-    const rootVoices = [];
-    const engineRoot = path.join(__dirname, "..", "Ai-teacher-voicemodel");
-
-    // Check root for reference_voice.wav
-    if (fs.existsSync(path.join(engineRoot, "reference_voice.wav"))) {
-      rootVoices.push("reference_voice.wav");
-    }
-
-    // Check voices folder
-    let subVoices = [];
-    if (fs.existsSync(VOICES_DIR)) {
-      subVoices = fs.readdirSync(VOICES_DIR).filter((f) => f.endsWith(".wav"));
-    }
-
-    const allVoices = Array.from(new Set([...rootVoices, ...subVoices]));
-    res.json({ voices: allVoices });
+    // Return available Google Cloud TTS voice types
+    res.json({ voices: ["Standard", "Wavenet", "Journey"] });
   } catch (e) {
     console.error("❌ VOICES LIST ERROR:", e);
     res.status(500).json({ error: "Failed to list voices" });
@@ -330,95 +321,95 @@ app.post("/ask-ai", async (req, res) => {
     const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
     const safeClassName = (className && className.trim() !== "") ? className.trim() : "General";
     const classContext = `Class: ${safeClassName}, Topic: ${safeTopic}`;
-    const thanglishPrompt = `EXTREMELY CASUAL, NATURAL THANGLISH (Tamil-English mix).
+    const thanglishPrompt = `EXTREMELY CASUAL, NATURAL TAMIL-ENGLISH MIX.
 
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Tamil character (e.g. அ, இ, த, ம்). If you use Tamil letters, the text-to-speech engine will crash.
+- You MUST write the Tamil words using native Tamil script (தமிழ்).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Tamil words (No Thanglish).
 
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Chennai would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Tamil for sentence structure, conjunctions, and helping verbs (e.g., "use pannuvom", "understand aagum", "solve panna", "run aagudhu").
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
-- NEVER use formal, literary, or pure Tamil words (e.g., avoid "seyyappadugirathu", "koodiyathu", "karanamaga", "aagum").
-- Keep technical terms 100% in pure English without any Tamil suffixes (e.g., say "conclusion", NOT "conclusion-a"; say "evidence", NOT "evidence-a").
+- Use English words for most nouns, verbs, and adjectives. Use Tamil script only for sentence structure, conjunctions, and helping verbs (e.g., "use பண்ணுவோம்", "understand ஆகும்", "solve பண்ண", "run ஆகுது").
+- NEVER use formal, literary, or pure Tamil words (e.g., avoid "செய்யப்படுகிறது", "கூடியது", "காரணமாக", "ஆகும்").
+- Keep technical terms 100% in pure English without any Tamil suffixes (e.g., say "conclusion", NOT "conclusion-அ").
 - The tone should be highly conversational, relaxed, and direct.
 
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array na, multiple values-a single variable-la store panna use aagura oru data structure. Idhula items ellam contigous memory locations-la irukkum. Index vechu easy-a elements access pannalam."
+Answer: "Array ன்னா, multiple values-அ single variable-ல store பண்ண use ஆகுற ஒரு data structure. இதுல items எல்லாம் contiguous memory locations-ல இருக்கும். Index வச்சு easy-ஆ elements access பண்ணலாம்."
 
 Question: "Explain object oriented programming"
-Answer: "Object oriented programming, or OOPs, na real-world entities-a objects madhiri treat panni code pandra style. Idhula classes and objects use panni code write pannuvom. Main concepts vandhu inheritance, polymorphism, encapsulation mari irukkum."
+Answer: "Object oriented programming, or OOPs, ன்னா real-world entities-அ objects மாதிரி treat பண்ணி code பண்ற style. இதுல classes and objects use பண்ணி code write பண்ணுவோம். Main concepts வந்து inheritance, polymorphism, encapsulation மாறி இருக்கும்."
 
 Question: "What is logical reasoning?"
-Answer: "Logical reasoning na, sariyaana evidence vechu correct conclusion epdi kondu varathu nu pakkaradhu. Idhula namma information analyze panni, pattern identify panni, correct mudivu eduppom."
+Answer: "Logical reasoning ன்னா, சரியான evidence வச்சு correct conclusion எப்படி கொண்டு வரது னு பாக்குறது. இதுல நம்ம information analyze பண்ணி, pattern identify பண்ணி, correct முடிவு எடுப்போம்."
 
 Question: "Why is water wet?"
-Answer: "Water yean wet-a irukku na, adhu liquid state-la irukkum pothu objects mela stick aagura property irukku. Idhu cohesion and adhesion nu solluvaanga."
+Answer: "Water ஏன் wet-ஆ இருக்கு ன்னா, அது liquid state-ல இருக்கும் போது objects மேல stick ஆகுற property இருக்கு. இது cohesion and adhesion னு சொல்லுவாங்க."
 
 Question: "What is the capital of France?"
-Answer: "France oda capital Paris. Idhu rumba famous-ana city, and Eiffel Tower anga dhaan irukku."`;
+Answer: "France ஓட capital Paris. இது ரொம்ப famous-ஆன city, and Eiffel Tower அங்க தான் இருக்கு."`;
 
-    const hinglishPrompt = `EXTREMELY CASUAL, NATURAL HINGLISH (Hindi-English mix).
+    const hinglishPrompt = `EXTREMELY CASUAL, NATURAL HINDI-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Hindi character. If you use Hindi letters, the text-to-speech engine will crash.
+- You MUST write the Hindi words using native Hindi script (Devanagari - हिंदी).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Hindi words (No Hinglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Delhi would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Hindi for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Hindi script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Hindi words.
 - Keep technical terms 100% in pure English without any Hindi suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array matlab, multiple values ko ek single variable mein store karne ke liye use hone wala data structure. Ismein items contiguous memory locations par hote hain. Index ka use karke elements ko easily access kar sakte hain."`;
+Answer: "Array मतलब, multiple values को एक single variable में store करने के लिए use होने वाला data structure. इसमें items contiguous memory locations पर होते हैं. Index का use करके elements को easily access कर सकते हैं."`;
 
-    const tenglishPrompt = `EXTREMELY CASUAL, NATURAL TENGLISH (Telugu-English mix).
+    const tenglishPrompt = `EXTREMELY CASUAL, NATURAL TELUGU-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Telugu character.
+- You MUST write the Telugu words using native Telugu script (తెలుగు).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Telugu words (No Tenglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Hyderabad would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Telugu for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Telugu script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Telugu words.
 - Keep technical terms 100% in pure English without any Telugu suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array ante, multiple values ni single variable lo store cheyadaniki use chese data structure. Indulo items anni contiguous memory locations lo untayi. Index use chesi elements ni easily access cheyochu."`;
+Answer: "Array అంటే, multiple values ని single variable లో store చేయడానికి use చేసే data structure. ఇందులో items అన్నీ contiguous memory locations లో ఉంటాయి. Index use చేసి elements ని easily access చేయొచ్చు."`;
 
-    const kanglishPrompt = `EXTREMELY CASUAL, NATURAL KANGLISH (Kannada-English mix).
+    const kanglishPrompt = `EXTREMELY CASUAL, NATURAL KANNADA-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Kannada character.
+- You MUST write the Kannada words using native Kannada script (ಕನ್ನಡ).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Kannada words (No Kanglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Bangalore would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Kannada for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Kannada script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Kannada words.
 - Keep technical terms 100% in pure English without any Kannada suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array andre, multiple values na single variable nalli store madakke use mado data structure. Idrali items ella contiguous memory locations nalli iruthe. Index use madi elements na easily access madbahudu."`;
+Answer: "Array ಅಂದ್ರೆ, multiple values ನ single variable ನಲ್ಲಿ store ಮಾಡೋಕೆ use ಮಾಡೋ data structure. ಇದ್ರಲ್ಲಿ items ಎಲ್ಲಾ contiguous memory locations ನಲ್ಲಿ ಇರುತ್ತೆ. Index use ಮಾಡಿ elements ನ easily access ಮಾಡ್ಬಹುದು."`;
 
-    const manglishPrompt = `EXTREMELY CASUAL, NATURAL MANGLISH (Malayalam-English mix).
+    const manglishPrompt = `EXTREMELY CASUAL, NATURAL MALAYALAM-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Malayalam character.
+- You MUST write the Malayalam words using native Malayalam script (മലയാളം).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Malayalam words (No Manglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Kochi would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Malayalam for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Malayalam script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Malayalam words.
 - Keep technical terms 100% in pure English without any Malayalam suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array ennal, multiple values oru single variable-il store cheyan use cheyunna data structure aanu. Ithil items contiguous memory locations-il aayirikkum. Index use cheythu elements easily access cheyam."`;
+Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ store ചെയ്യാൻ use ചെയ്യുന്ന data structure ആണ്. ഇതിൽ items contiguous memory locations-ൽ ആയിരിക്കും. Index use ചെയ്തു elements easily access ചെയ്യാം."`;
 
     const languageMap = {
       'ta': thanglishPrompt,
@@ -656,12 +647,14 @@ For \`IGNORE\`:
       const lowerQ = question.toLowerCase().trim().replace(/[^a-z\s]/g, "");
       let ans = `Hello ${studentName}! Please ask your doubt.`;
       
-      if (lowerQ === "good morning") ans = `Good morning ${studentName}! Please ask your doubt.`;
-      else if (lowerQ === "good afternoon") ans = `Good afternoon ${studentName}! Please ask your doubt.`;
-      else if (lowerQ === "good evening") ans = `Good evening ${studentName}! Please ask your doubt.`;
+      if (lowerQ.includes("good morning")) ans = `Good morning ${studentName}! Please ask your doubt.`;
+      else if (lowerQ.includes("good afternoon")) ans = `Good afternoon ${studentName}! Please ask your doubt.`;
+      else if (lowerQ.includes("good evening")) ans = `Good evening ${studentName}! Please ask your doubt.`;
       else if (lowerQ.includes("how are you")) ans = `I'm doing well, ${studentName}! Please ask your doubt.`;
+      else if (lowerQ.includes("hi") || lowerQ.includes("hello") || lowerQ.includes("hey")) ans = `Hello ${studentName}! Please ask your doubt.`;
       
-      return res.json({ answer: ans, isDirectResponse: true });
+      // Prefer LLM generated exact match if provided, otherwise fallback to our robust JS check
+      return res.json({ answer: classification.response && classification.response !== "THE EXACT MAPPED GREETING RESPONSE" ? classification.response : ans, isDirectResponse: true });
     }
 
     if (classification.category === "PERSONAL") {
@@ -671,14 +664,14 @@ For \`IGNORE\`:
       
       if (lowerQ.includes("human")) ans = `I'm here to support you with your learning, ${studentName}. Please ask your doubt.`;
       else if (lowerQ.includes("name")) ans = `You can simply call me your teacher, ${studentName}. Please ask your doubt.`;
-      else if (lowerQ.includes("old")) ans = `Let's keep the focus on learning, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("old") || lowerQ.includes("age")) ans = `Let's keep the focus on learning, ${studentName}. Please ask your doubt.`;
       else if (lowerQ.includes("live") || lowerQ.includes("from")) ans = `I'm always here to support your learning, ${studentName}. Please ask your doubt.`;
       else if (lowerQ.includes("feelings")) ans = `That's an interesting question. Let's focus on your learning, ${studentName}. Please ask your doubt.`;
-      else if (lowerQ.includes("robot")) ans = `I'm here to guide you through your lessons, ${studentName}. Please ask your doubt.`;
+      else if (lowerQ.includes("robot") || lowerQ.includes("ai")) ans = `I'm here to guide you through your lessons, ${studentName}. Please ask your doubt.`;
       else if (lowerQ.includes("created") || lowerQ.includes("made")) ans = `I'm here to help you with your studies, ${studentName}. Please ask your doubt.`;
       else if (lowerQ.includes("friend")) ans = `Of course, I'm happy to support you in your learning, ${studentName}. Please ask your doubt.`;
       
-      return res.json({ answer: ans, isDirectResponse: true });
+      return res.json({ answer: classification.response && classification.response !== "THE EXACT MAPPED PERSONAL RESPONSE" ? classification.response : ans, isDirectResponse: true });
     }
 
     if (classification.category === "OFF_TOPIC") {

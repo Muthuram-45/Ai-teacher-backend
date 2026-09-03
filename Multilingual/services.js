@@ -1,9 +1,11 @@
 
 const { GoogleGenAI } = require("@google/genai");
+const textToSpeech = require('@google-cloud/text-to-speech');
 
 const client = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
+const ttsClient = new textToSpeech.TextToSpeechClient();
 
 class STTService {
   /**
@@ -34,77 +36,76 @@ class TranslationService {
   static async translate(text, targetLanguage) {
     if (!text || text.trim() === '') return text;
     
-    const thanglishPrompt = `Natural conversational Thanglish (Tamil-English mix).
+    const thanglishPrompt = `Natural conversational Tamil-English mix (Code-switching).
 REQUIRED BEHAVIOR:
-- The ENTIRE answer MUST be in Thanglish. NEVER switch back to full English sentences at any point.
-- Use Latin script ONLY (e.g. "Innaiku namma learn panna porom"). NEVER use Tamil script (e.g. "இன்று").
-- Naturally mix Tamil grammar with English vocabulary.
-- Keep technical and classroom terms in English without adding unnecessary Tamil suffixes (e.g. use "evidence", not "evidence-a"; use "conclusion", not "conclusion-a").
+- You MUST write the Tamil words using native Tamil script (தமிழ்).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Tamil words (No Thanglish).
+- Keep technical and classroom terms in English without adding unnecessary Tamil suffixes (e.g. use "evidence", not "evidence-அ"; use "conclusion", not "conclusion-அ").
 - Avoid literal translation and overly formal Tamil.
 - Make it sound like a real Tamil teacher explaining a concept naturally.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
-Example 1: "Logical reasoning na, eppadi sariyaana evidence vechu correct-ana conclusion-ku varathu nu pakkaradhu. Idhula namma information-a analyze panni, patterns identify panni, oru correct-ana mudivukku varuvom."
-Example 2: "Innaiku namma photosynthesis pathi learn panna porom."`;
+Example 1: "Logical reasoning ன்னா, எப்படி சரியான evidence வச்சு correct-ஆன conclusion-க்கு வர்றது னு பாக்குறது. இதுல நம்ம information-அ analyze பண்ணி, patterns identify பண்ணி, ஒரு correct-ஆன முடிவுக்கு வருவோம்."
+Example 2: "இன்னைக்கு நம்ம photosynthesis பத்தி learn பண்ண போறோம்."`;
 
-    const hinglishPrompt = `EXTREMELY CASUAL, NATURAL HINGLISH (Hindi-English mix).
+    const hinglishPrompt = `EXTREMELY CASUAL, NATURAL HINDI-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Hindi character. If you use Hindi letters, the text-to-speech engine will crash.
+- You MUST write the Hindi words using native Hindi script (Devanagari - हिंदी).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Hindi words (No Hinglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Delhi would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Hindi for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Hindi script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Hindi words.
 - Keep technical terms 100% in pure English without any Hindi suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array matlab, multiple values ko ek single variable mein store karne ke liye use hone wala data structure. Ismein items contiguous memory locations par hote hain. Index ka use karke elements ko easily access kar sakte hain."`;
+Answer: "Array मतलब, multiple values को एक single variable में store करने के लिए use होने वाला data structure. इसमें items contiguous memory locations पर होते हैं. Index का use करके elements को easily access कर सकते हैं."`;
 
-    const tenglishPrompt = `EXTREMELY CASUAL, NATURAL TENGLISH (Telugu-English mix).
+    const tenglishPrompt = `EXTREMELY CASUAL, NATURAL TELUGU-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Telugu character.
+- You MUST write the Telugu words using native Telugu script (తెలుగు).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Telugu words (No Tenglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Hyderabad would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Telugu for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Telugu script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Telugu words.
 - Keep technical terms 100% in pure English without any Telugu suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array ante, multiple values ni single variable lo store cheyadaniki use chese data structure. Indulo items anni contiguous memory locations lo untayi. Index use chesi elements ni easily access cheyochu."`;
+Answer: "Array అంటే, multiple values ని single variable లో store చేయడానికి use చేసే data structure. ఇందులో items అన్నీ contiguous memory locations లో ఉంటాయి. Index use చేసి elements ని easily access చేయొచ్చు."`;
 
-    const kanglishPrompt = `EXTREMELY CASUAL, NATURAL KANGLISH (Kannada-English mix).
+    const kanglishPrompt = `EXTREMELY CASUAL, NATURAL KANNADA-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Kannada character.
+- You MUST write the Kannada words using native Kannada script (ಕನ್ನಡ).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Kannada words (No Kanglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Bangalore would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Kannada for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Kannada script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Kannada words.
 - Keep technical terms 100% in pure English without any Kannada suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array andre, multiple values na single variable nalli store madakke use mado data structure. Idrali items ella contiguous memory locations nalli iruthe. Index use madi elements na easily access madbahudu."`;
+Answer: "Array ಅಂದ್ರೆ, multiple values ನ single variable ನಲ್ಲಿ store ಮಾಡೋಕೆ use ಮಾಡೋ data structure. ಇದ್ರಲ್ಲಿ items ಎಲ್ಲಾ contiguous memory locations ನಲ್ಲಿ ಇರುತ್ತೆ. Index use ಮಾಡಿ elements ನ easily access ಮಾಡ್ಬಹುದು."`;
 
-    const manglishPrompt = `EXTREMELY CASUAL, NATURAL MANGLISH (Malayalam-English mix).
+    const manglishPrompt = `EXTREMELY CASUAL, NATURAL MALAYALAM-ENGLISH MIX.
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
-- You MUST write the ENTIRE response using standard English alphabets (Latin script) ONLY.
-- It is STRICTLY FORBIDDEN to use even a single Malayalam character.
+- You MUST write the Malayalam words using native Malayalam script (മലയാളം).
+- You MUST write all technical terms, nouns, and English words using standard English alphabets.
+- Mix them naturally in the same sentence. Do NOT use Latin script for Malayalam words (No Manglish).
 CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Kochi would speak naturally.
-- Use English words for most nouns, verbs, and adjectives. Only use Malayalam for sentence structure, conjunctions, and helping verbs.
-- PRONUNCIATION & TTS FIXES: English TTS engines often fail on words like "idhu", "adhu", "agite" and spell them letter-by-letter (i-d-h-u). To prevent this, alter the spelling to force word pronunciation (e.g., use "ithu", "athu", "eethu", "aaguthey"). Use clear English syllables, avoid consonant clusters, and avoid capitalization for regional words.
+- Use English words for most nouns, verbs, and adjectives. Use Malayalam script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Malayalam words.
 - Keep technical terms 100% in pure English without any Malayalam suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
-Answer: "Array ennal, multiple values oru single variable-il store cheyan use cheyunna data structure aanu. Ithil items contiguous memory locations-il aayirikkum. Index use cheythu elements easily access cheyam."`;
+Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ store ചെയ്യാൻ use ചെയ്യുന്ന data structure ആണ്. ഇതിൽ items contiguous memory locations-ൽ ആയിരിക്കും. Index use ചെയ്തു elements easily access ചെയ്യാം."`;
 
     const languageMap = {
       'ta': thanglishPrompt,
@@ -140,22 +141,25 @@ Answer: "Array ennal, multiple values oru single variable-il store cheyan use ch
 class TTSService {
   static async synthesize(text, languageCode) {
     try {
-      // Using Google Translate TTS (similar to proxy in server.js)
-      // languageCode: 'ta', 'hi', 'ml'
-      const url = `https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=${languageCode}&q=${encodeURIComponent(text)}`;
+      const localeMap = {
+        'en': 'en-IN',
+        'hi': 'hi-IN',
+        'ml': 'ml-IN',
+        'ta': 'ta-IN',
+        'te': 'te-IN',
+        'kn': 'kn-IN',
+        'en-IN': 'en-IN'
+      };
+      const locale = localeMap[languageCode] || languageCode;
       
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`TTS failed with status: ${response.status}`);
-      }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
+      const request = {
+        input: { text: text },
+        voice: { languageCode: locale, name: `${locale}-Wavenet-A` }, // fallback to Wavenet
+        audioConfig: { audioEncoding: 'MP3' },
+      };
+
+      const [response] = await ttsClient.synthesizeSpeech(request);
+      return response.audioContent;
     } catch (error) {
       console.error("TTS Error:", error);
       throw error;
