@@ -152,9 +152,15 @@ class TTSService {
       };
       const locale = localeMap[languageCode] || languageCode;
       
+      // Read the activeVoice global if available, default to Female/A
+      let genderSuffix = 'A';
+      if (global.activeVoice === "Male") {
+          genderSuffix = 'B';
+      }
+      
       const request = {
         input: { text: text },
-        voice: { languageCode: locale, name: `${locale}-Wavenet-A` }, // fallback to Wavenet
+        voice: { languageCode: locale, name: `${locale}-Wavenet-${genderSuffix}` }, 
         audioConfig: { audioEncoding: 'MP3' },
       };
 

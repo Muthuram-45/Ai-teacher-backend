@@ -41,13 +41,14 @@ app.post("/api/tts", async (req, res) => {
       'en-IN': 'en-IN'
     };
     const locale = localeMap[lang] || lang;
-    const voiceType = activeVoice && activeVoice !== 'reference_voice.wav' ? activeVoice : 'Wavenet';
+    const isMale = activeVoice === "Male";
+    const genderSuffix = isMale ? "B" : "A"; // Wavenet-B is Male, Wavenet-A is Female in most IN locales
     
     // Construct request
     const request = {
       input: { text: text },
-      // Select the language and SSML voice gender (optional)
-      voice: { languageCode: locale, name: `${locale}-${voiceType}-${voiceType === 'Journey' ? 'F' : 'A'}` }, // fallback to wavenet
+      // Select the language and SSML voice gender
+      voice: { languageCode: locale, name: `${locale}-Wavenet-${genderSuffix}` },
       // select the type of audio encoding
       audioConfig: { audioEncoding: 'MP3' },
     };
@@ -85,7 +86,8 @@ const path = require("path");
 // In-memory state for waiting and blocked students
 const waitingStudents = {}; // { requestId: { name, room, status: 'waiting' | 'admitted' | 'rejected', token, url } }
 const blockedStudents = new Set(); // Set of "roomName:studentName" or just globally? Let's do "roomName:studentName"
-let activeVoice = "reference_voice.wav"; // Default voice
+let activeVoice = "Female"; // Default voice
+global.activeVoice = activeVoice;
 
 // In-memory activity summaries
 const studentActivitiesData = {}; // { roomName: { studentName: { awayTime, inactiveTime, backgroundTime, warningCount } } }
@@ -96,8 +98,8 @@ const VOICES_DIR = path.join(__dirname, "..", "Ai-teacher-voicemodel", "voices")
 // Voice Management Endpoints
 app.get("/list-voices", (req, res) => {
   try {
-    // Return available Google Cloud TTS voice types
-    res.json({ voices: ["Standard", "Wavenet", "Journey"] });
+    // Return available Google Cloud TTS voice genders (Wavenet is fixed)
+    res.json({ voices: ["Female", "Male"] });
   } catch (e) {
     console.error("❌ VOICES LIST ERROR:", e);
     res.status(500).json({ error: "Failed to list voices" });
@@ -108,6 +110,7 @@ app.post("/select-voice", (req, res) => {
   const { voice } = req.body;
   if (!voice) return res.status(400).json({ error: "No voice name provided" });
   activeVoice = voice;
+  global.activeVoice = voice;
   console.log(`🎤 ACTIVE VOICE SET TO: ${voice}`);
   res.json({ success: true, activeVoice });
 });
@@ -1232,26 +1235,48 @@ app.post("/api/generate-video", async (req, res) => {
       return res.status(400).json({ error: "Topic is required" });
     }
 
-    console.log(`🎬 [VIDEO-GEN] Proxying one-shot request: topic="${topic}", subTopic="${subTopic || 'N/A'}", duration=${durationMinutes}min`);
-
-    const response = await fetch(`${VIDEOGEN_API}/api/generate/one-shot`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, subTopic, durationMinutes, languages, voiceId })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error(`❌ [VIDEO-GEN] VideoGenerator returned error:`, data);
-      return res.status(response.status).json(data);
+    console.log(`🎬 [VIDEO-GEN] Step 1: Generating script for topic="${topic}", subTopic="${subTopic || 'N/A'}", duration=${durationMinutes}min`);
+    
+    const axios = require('axios');
+    
+    // Step 1: Generate Script
+    const scriptResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate-script`, 
+      { topic, subTopic, durationMinutes },
+      { timeout: 1200000 } // 20 minutes
+    );
+    
+    const scriptData = scriptResponse.data;
+    
+    if (!scriptData.success) {
+      console.error(`❌ [VIDEO-GEN] Script generation failed:`, scriptData);
+      return res.status(500).json(scriptData);
     }
+    
+    console.log(`🎬 [VIDEO-GEN] Step 2: Generating video with languages=${languages?.join(',')}, voiceId=${voiceId}`);
+    
+    // Map Frontend "Male" / "Female" to Videogenerator expected values
+    let mappedVoiceId = voiceId;
+    if (voiceId === "Male") mappedVoiceId = "google-cloud-tts-male";
+    if (voiceId === "Female") mappedVoiceId = "google-cloud-tts-female";
 
-    console.log(`✅ [VIDEO-GEN] Video generated successfully. ID: ${data.data?.id}`);
-    res.json(data);
+    // Step 2: Generate Video
+    const videoResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate`, 
+      { 
+        text: scriptData.text,
+        format: 'landscape',
+        languages: JSON.stringify(languages || []),
+        voiceId: mappedVoiceId 
+      },
+      { timeout: 1200000 } // 20 minutes
+    );
+    
+    const videoData = videoResponse.data;
+
+    console.log(`✅ [VIDEO-GEN] Video generated successfully. ID: ${videoData.data?.id}`);
+    res.json(videoData);
   } catch (err) {
-    console.error("❌ [VIDEO-GEN] Proxy error:", err);
-    res.status(500).json({ error: "Failed to generate video", details: err.message });
+    console.error("❌ [VIDEO-GEN] Proxy error:", err.response ? err.response.data : err.message);
+    res.status(err.response ? err.response.status : 500).json({ error: "Failed to generate video", details: err.message });
   }
 });
 
