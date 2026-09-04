@@ -1,9 +1,12 @@
 
 const { GoogleGenAI } = require("@google/genai");
 const textToSpeech = require('@google-cloud/text-to-speech');
+const { logTokenUsage } = require("../utils/tokenLogger");
 
 const client = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  vertexai: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true',
+  project: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION || "global",
 });
 const ttsClient = new textToSpeech.TextToSpeechClient();
 
@@ -16,15 +19,18 @@ class STTService {
   static async transcribe(audioBuffer, mimetype = 'audio/wav') {
     try {
       const fileBase64 = audioBuffer.toString("base64");
-      const transcriptionCompletion = await client.interactions.create({
+      const transcriptionCompletion = await client.models.generateContent({
         model: "gemini-3.5-flash",
-        system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
-        input: [
-            { audio: { data: fileBase64, mime_type: mimetype } }
-        ]
+        contents: [
+            { inlineData: { data: fileBase64, mimeType: mimetype } }
+        ],
+        config: {
+            systemInstruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
+        }
       });
       
-      return { text: transcriptionCompletion.output_text || "" };
+      logTokenUsage("gemini-3.5-flash", transcriptionCompletion.usageMetadata);
+      return { text: transcriptionCompletion.text || "" };
     } catch (error) {
       console.error("STT Error:", error);
       throw error;
@@ -121,13 +127,16 @@ Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ
     const prompt = `Translate the following text to ${langName}. Return ONLY the translated text, without any additional comments, quotes or formatting:\n\n"${text}"`;
     
     try {
-      const completion = await client.interactions.create({
+      const completion = await client.models.generateContent({
         model: "gemini-3.5-flash",
-        system_instruction: "You are a professional translator. Provide direct translations without any meta-text.",
-        input: prompt,
+        contents: prompt,
+        config: {
+            systemInstruction: "You are a professional translator. Provide direct translations without any meta-text.",
+        }
       });
       
-      let translated = completion.output_text?.trim();
+      logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
+      let translated = completion.text?.trim();
       // Clean up if it starts/ends with quotes
       translated = translated.replace(/^"|"$/g, "");
       return translated;

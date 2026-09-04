@@ -4,6 +4,7 @@ const cors = require("cors");
 const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const { GoogleGenAI } = require("@google/genai");
 const textToSpeech = require('@google-cloud/text-to-speech');
+const { logTokenUsage } = require("./utils/tokenLogger");
 const ttsClient = new textToSpeech.TextToSpeechClient();
 
 const app = express();
@@ -68,7 +69,9 @@ app.post("/api/tts", async (req, res) => {
 });
 
 const client = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+  vertexai: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true',
+  project: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION || "global",
 });
 
 const roomService = new RoomServiceClient(
@@ -623,15 +626,19 @@ For \`OFF_TOPIC\` (You MUST return exactly this English response):
 For \`IGNORE\`:
 { "category": "IGNORE", "response": "" }`;
 
-    const validationResponse = await client.interactions.create({
+    const validationResponse = await client.models.generateContent({
       model: "gemini-3.5-flash-lite",
-      system_instruction: validationPrompt,
-      input: "Classify the student's message and generate the appropriate response if needed."
+      contents: "Classify the student's message and generate the appropriate response if needed.",
+      config: {
+          systemInstruction: validationPrompt,
+      }
     });
+    
+    logTokenUsage("gemini-3.5-flash-lite", validationResponse.usageMetadata);
 
     let classification = { category: "YES" };
     try {
-      const outputText = validationResponse.output_text?.trim() || "{}";
+      const outputText = validationResponse.text?.trim() || "{}";
       const cleanedJson = outputText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       classification = JSON.parse(cleanedJson);
     } catch (e) {
@@ -686,9 +693,11 @@ For \`IGNORE\`:
     // 🤖 2. Answer the Question
     const topicContext = `The current class context is: "${classContext}".`;
 
-    const completion = await client.interactions.create({
+    const completion = await client.models.generateContent({
       model: "gemini-3.5-flash",
-      system_instruction: `You are a strict but friendly classroom Teacher. ${topicContext} ` +
+      contents: question,
+      config: {
+          systemInstruction: `You are a strict but friendly classroom Teacher. ${topicContext} ` +
             "RULES: " +
             "1. Give a clear, direct answer to the student's question. " +
             "2. Provide a detailed but concise explanation (around 3 to 5 sentences). " +
@@ -698,10 +707,11 @@ For \`IGNORE\`:
             "6. Use the EXACT technical terms the student asked about instead of substituting them with synonyms. " +
             `7. You MUST start your answer by addressing the student by their name: '${student}' (e.g. '${student}, logical reasoning is...'). ` +
             languageStr,
-      input: question,
+      }
     });
 
-    const answer = completion.output_text;
+    const answer = completion.text;
+    logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
     console.log(`[ASK-AI] Answer generated:\n${answer}\n`);
 
     res.json({ answer });
@@ -741,14 +751,18 @@ Transcript:
 
 Extracted Question:`;
 
-    const completion = await client.interactions.create({
+    const completion = await client.models.generateContent({
       model: "gemini-3.5-flash",
-      system_instruction: "You extract core questions from classroom dialogue. Return only the extracted question text, or an empty string if none found.",
-      input: prompt,
-      generation_config: { temperature: 0.1 },
+      contents: prompt,
+      config: {
+          systemInstruction: "You extract core questions from classroom dialogue. Return only the extracted question text, or an empty string if none found.",
+          temperature: 0.1,
+      }
     });
 
-    const extractedQuestion = completion.output_text
+    logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
+
+    const extractedQuestion = completion.text
       ?.trim()
       .replace(/^"|"$/g, "");
 
@@ -808,15 +822,19 @@ Return ONLY a valid JSON array in this exact format, with no additional text:
 
 The correctAnswer should be the index (0-3) of the correct option.`;
 
-    const completion = await client.interactions.create({
+    const completion = await client.models.generateContent({
       model: "gemini-3.5-flash",
-      system_instruction: "You are a quiz generator and translator. Return only valid JSON arrays with no additional text or formatting.",
-      input: prompt,
+      contents: prompt,
+      config: {
+          systemInstruction: "You are a quiz generator and translator. Return only valid JSON arrays with no additional text or formatting.",
+      }
     });
+
+    logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
 
     let quizQuestions;
     try {
-      const responseText = completion.output_text?.trim();
+      const responseText = completion.text?.trim();
       // Remove markdown code blocks if present
       const jsonText = responseText
         .replace(/```json\n?/g, "")
@@ -899,15 +917,18 @@ Return ONLY a valid JSON object in this exact format, with no additional text or
 
 The correctAnswer should be the index (0-2) of the correct option.`;
 
-    const completion = await client.interactions.create({
-      model: "gemini-3.5-flash",
-      system_instruction: "You are a question generator. Return only a valid JSON object with no additional text or formatting.",
-      input: prompt,
+    const completion = await client.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a question generator. Return only a valid JSON object with no additional text or formatting."
+      }
     });
+    logTokenUsage("gemini-2.5-flash", completion.usageMetadata);
 
     let questionObj;
     try {
-      const responseText = completion.output_text?.trim();
+      const responseText = completion.text?.trim();
       const jsonText = responseText
         .replace(/```json\n?/g, "")
         .replace(/```\n?/g, "")
@@ -1175,13 +1196,14 @@ RULES:
 
 OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
 
-    const validationResponse = await client.interactions.create({
-      model: "gemini-3.5-flash-lite",
-      input: validationPrompt,
+    const validationResponse = await client.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: validationPrompt,
     });
+    logTokenUsage("gemini-2.5-flash", validationResponse.usageMetadata);
 
     const validationResult =
-      validationResponse.output_text?.trim()?.toUpperCase() ||
+      validationResponse.text?.trim()?.toUpperCase() ||
       "";
     console.log(
       `[ENCOURAGE-STUDENT] Validation result for "${question}": "${validationResult}"`,
@@ -1202,15 +1224,18 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
     3. Use "doubt" instead of "question" where appropriate.
     4. Return ONLY the encouraging statement.`;
 
-    const completion = await client.interactions.create({
-      model: "gemini-3.5-flash",
-      system_instruction: "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
-      input: prompt,
-      generation_config: { temperature: 0.8 },
+    const completion = await client.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
+        temperature: 0.8,
+      }
     });
+    logTokenUsage("gemini-2.5-flash", completion.usageMetadata);
 
     const encouragement =
-      completion.output_text?.trim() ||
+      completion.text?.trim() ||
       `Good question, ${name}!`;
 
     res.json({ encouragement });
@@ -1247,26 +1272,18 @@ Rules:
 
     let summary = "No summary available.";
     try {
-      const completion = await client.interactions.create({
-        model: "gemini-3.5-flash",
-        system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
-        input: prompt,
-        generation_config: { temperature: 0.5 },
+      const completion = await client.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          systemInstruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
+          temperature: 0.5,
+        }
       });
-      summary = completion.output_text?.trim() || "No summary available.";
+      logTokenUsage("gemini-2.5-flash", completion.usageMetadata);
+      summary = completion.text?.trim() || "No summary available.";
     } catch (err) {
-      console.warn("⚠️ Primary summary model failed, falling back to gemini-2.5-flash...", err.message);
-      try {
-        const fallbackCompletion = await client.interactions.create({
-          model: "gemini-2.5-flash",
-          system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
-          input: prompt,
-          generation_config: { temperature: 0.5 },
-        });
-        summary = fallbackCompletion.output_text?.trim() || "No summary available.";
-      } catch (fallbackErr) {
-        console.error("❌ SUMMARY GENERATION FALLBACK ERROR:", fallbackErr.message);
-      }
+      console.error("❌ SUMMARY GENERATION ERROR:", err.message);
     }
 
     res.json({ summary });

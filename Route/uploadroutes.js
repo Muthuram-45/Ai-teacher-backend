@@ -4,9 +4,13 @@ const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
 const { GoogleGenAI } = require("@google/genai");
+const { Storage } = require("@google-cloud/storage");
+const { logTokenUsage } = require("../utils/tokenLogger");
 
 const client = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    vertexai: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true',
+    project: process.env.GOOGLE_CLOUD_PROJECT,
+    location: process.env.GOOGLE_CLOUD_LOCATION || "global",
 });
 
 const router = express.Router();
@@ -111,24 +115,66 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`🎵 Extracting audio...`);
     await execPromise(`ffmpeg -i "${mergedVideoPath}" -vn -ab 128k -ar 44100 -y "${audioPath}"`);
 
-    console.log(`📝 Sending to Gemini for transcription...`);
-    const uploadResult = await client.files.upload({ file: audioPath });
+    console.log(`📝 Uploading audio to Google Cloud Storage for transcription...`);
+    const bucketName = process.env.GOOGLE_CLOUD_STORAGE_BUCKET;
+    if (!bucketName) {
+        throw new Error("GOOGLE_CLOUD_STORAGE_BUCKET is not set. Transcription requires GCS for Vertex AI.");
+    }
+    
+    const storageClient = new Storage({ projectId: process.env.GOOGLE_CLOUD_PROJECT });
+    const gcsFileName = `${sessionId}_audio_${Date.now()}.mp3`;
+    
+    await storageClient.bucket(bucketName).upload(audioPath, {
+        destination: gcsFileName,
+    });
+    
+    const gcsUri = `gs://${bucketName}/${gcsFileName}`;
+    console.log(`✅ Uploaded to GCS: ${gcsUri}`);
+
     let audioTranscription = "";
     try {
-        const transcriptionCompletion = await client.interactions.create({
+        const transcriptionCompletion = await client.models.generateContent({
             model: "gemini-3.5-flash",
-            system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
-            input: uploadResult
+            contents: [
+                {
+                    fileData: {
+                        fileUri: gcsUri,
+                        mimeType: "audio/mp3"
+                    }
+                }
+            ],
+            config: {
+                systemInstruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting."
+            }
         });
-        audioTranscription = transcriptionCompletion.output_text || "";
+        audioTranscription = transcriptionCompletion.text || "";
+        logTokenUsage("gemini-3.5-flash", transcriptionCompletion.usageMetadata);
     } catch (e) {
         console.warn("⚠️ Transcription primary model failed, falling back to gemini-2.5-flash...", e.message);
-        const fbCompletion = await client.interactions.create({
+        const fbCompletion = await client.models.generateContent({
             model: "gemini-2.5-flash",
-            system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
-            input: uploadResult
+            contents: [
+                {
+                    fileData: {
+                        fileUri: gcsUri,
+                        mimeType: "audio/mp3"
+                    }
+                }
+            ],
+            config: {
+                systemInstruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting."
+            }
         });
-        audioTranscription = fbCompletion.output_text || "";
+        audioTranscription = fbCompletion.text || "";
+        logTokenUsage("gemini-2.5-flash", fbCompletion.usageMetadata);
+    }
+    
+    // Clean up GCS file
+    try {
+        await storageClient.bucket(bucketName).file(gcsFileName).delete();
+        console.log(`🧹 Cleaned up GCS audio file: ${gcsFileName}`);
+    } catch (e) {
+        console.warn(`⚠️ Failed to clean up GCS audio file ${gcsFileName}:`, e.message);
     }
 
     // 📖 Combine with Chat History
@@ -156,20 +202,26 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`🤖 Generating summary...`);
     let summary = "No summary generated.";
     try {
-        const completion = await client.interactions.create({
+        const completion = await client.models.generateContent({
             model: "gemini-3.5-flash",
-            system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
-            input: fullTranscript
+            contents: fullTranscript,
+            config: {
+                systemInstruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists."
+            }
         });
-        summary = completion.output_text || "No summary generated.";
+        summary = completion.text || "No summary generated.";
+        logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
     } catch (e) {
         console.warn("⚠️ Summary primary model failed, falling back to gemini-2.5-flash...", e.message);
-        const fbCompletion = await client.interactions.create({
+        const fbCompletion = await client.models.generateContent({
             model: "gemini-2.5-flash",
-            system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
-            input: fullTranscript
+            contents: fullTranscript,
+            config: {
+                systemInstruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists."
+            }
         });
-        summary = fbCompletion.output_text || "No summary generated.";
+        summary = fbCompletion.text || "No summary generated.";
+        logTokenUsage("gemini-2.5-flash", fbCompletion.usageMetadata);
     }
     
     // Append summary to the full transcript
