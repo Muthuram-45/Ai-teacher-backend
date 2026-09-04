@@ -1078,8 +1078,8 @@ app.post("/api/activity-sync", (req, res) => {
   res.json({ success: true });
 });
 
-// 📥 Download Activity History CSV
-app.get("/api/activity-history/:roomName", (req, res) => {
+// 📥 Download Activity History XLSX (Styled)
+app.get("/api/activity-history/:roomName", async (req, res) => {
   const { roomName } = req.params;
   const roomData = studentActivitiesData[roomName];
 
@@ -1087,21 +1087,62 @@ app.get("/api/activity-history/:roomName", (req, res) => {
     return res.status(404).json({ error: "No activity data found for this room" });
   }
 
-  // Create CSV Header
-  let csvData = "Student Name,Total Away Time (s),Total Inactive Time (s),Total Background Time (s),Total Warnings\n";
+  const ExcelJS = require('exceljs');
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Activity Report');
 
-  // Add rows
+  // Define Columns
+  worksheet.columns = [
+    { key: 'name', width: 20 },
+    { key: 'away', width: 22 },
+    { key: 'inactive', width: 24 },
+    { key: 'background', width: 26 },
+    { key: 'warnings', width: 18 }
+  ];
+
+  // Add "ACTIVITY DETAILS" header row
+  worksheet.mergeCells('A1:E1');
+  const titleCell = worksheet.getCell('A1');
+  titleCell.value = 'ACTIVITY DETAILS';
+  titleCell.font = { bold: true, size: 12 };
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  titleCell.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFFFF00' } // Yellow background
+  };
+  worksheet.getRow(1).height = 25;
+
+  // Add Column Headers
+  const headerRow = worksheet.addRow([
+    'Student Name',
+    'Total Away Time (s)',
+    'Total Inactive Time (s)',
+    'Total Background Time (s)',
+    'Total Warnings'
+  ]);
+  
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true };
+    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  });
+  worksheet.getRow(2).height = 20;
+
+  // Add Data Rows
   for (const [studentName, data] of Object.entries(roomData)) {
     const away = Math.floor(data.awayTime / 1000);
     const inactive = Math.floor(data.inactiveTime / 1000);
     const bg = Math.floor(data.backgroundTime / 1000);
-    csvData += `${studentName},${away},${inactive},${bg},${data.warningCount}\n`;
+    worksheet.addRow([studentName, away, inactive, bg, data.warningCount]);
   }
 
-  // Set headers to trigger file download
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="activity_report_${roomName}.csv"`);
-  res.status(200).send(csvData);
+  // Set response headers
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="activity_report_${roomName}.xlsx"`);
+
+  // Write to response
+  await workbook.xlsx.write(res);
+  res.end();
 });
 
 // 🔍 Check Room Status (for student join page)
@@ -1204,19 +1245,33 @@ Rules:
 4. Use terms like "doubts cleared" instead of "questions answered".
 5. Return ONLY the summary text.`;
 
-    const completion = await client.interactions.create({
-      model: "gemini-3.5-flash",
-      system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
-      input: prompt,
-      generation_config: { temperature: 0.5 },
-    });
-
-    const summary =
-      completion.output_text?.trim() || "No summary available.";
+    let summary = "No summary available.";
+    try {
+      const completion = await client.interactions.create({
+        model: "gemini-3.5-flash",
+        system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
+        input: prompt,
+        generation_config: { temperature: 0.5 },
+      });
+      summary = completion.output_text?.trim() || "No summary available.";
+    } catch (err) {
+      console.warn("⚠️ Primary summary model failed, falling back to gemini-2.5-flash...", err.message);
+      try {
+        const fallbackCompletion = await client.interactions.create({
+          model: "gemini-2.5-flash",
+          system_instruction: "You are an Indian Teacher Assistant. Provide concise and polite class summaries.",
+          input: prompt,
+          generation_config: { temperature: 0.5 },
+        });
+        summary = fallbackCompletion.output_text?.trim() || "No summary available.";
+      } catch (fallbackErr) {
+        console.error("❌ SUMMARY GENERATION FALLBACK ERROR:", fallbackErr.message);
+      }
+    }
 
     res.json({ summary });
   } catch (err) {
-    console.error("❌ SUMMARY GENERATION ERROR:", err);
+    console.error("❌ SUMMARY ROUTE ERROR:", err);
     res.status(500).json({ error: "Summary generation failed" });
   }
 });

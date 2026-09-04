@@ -17,12 +17,15 @@ const storage = multer.diskStorage({
         const className = req.body.className || roomName;
         const today = new Date().toISOString().split("T")[0];
 
+        const sessionId = req.body.sessionId || "default";
+
         const basePath = path.join(
             __dirname,
             "..",
             "ClassRecordings",
             today,
-            className
+            className,
+            sessionId
         );
 
         if (!fs.existsSync(basePath)) {
@@ -55,21 +58,32 @@ router.post("/upload", upload.single("video"), async (req, res) => {
         console.log(`💬 Chat history saved for session ${sessionId}`);
     }
 
+    let finalTranscript = null;
+
     if (isFinal === "true" && transcribe === "true") {
         console.log(`🎬 Recording finished. Starting transcription process for session ${sessionId}...`);
+        try {
+            finalTranscript = await processTranscription(directory, sessionId, className || roomName);
+        } catch (err) {
+            console.error("❌ Transcription Process Error:", err);
+            finalTranscript = "Transcription failed: " + err.message;
+        }
+    }
 
-        setImmediate(async () => {
-            try {
-                await processTranscription(directory, sessionId, className || roomName);
-            } catch (err) {
-                console.error("❌ Transcription Process Error:", err);
-            }
-        });
+    if (isFinal === "true") {
+        // Cleanup the temporary directory to avoid saving permanently on the server
+        try {
+            fs.rmSync(directory, { recursive: true, force: true });
+            console.log(`🧹 Cleaned up temporary recording directory: ${directory}`);
+        } catch (e) {
+            console.error(`❌ Failed to clean up directory ${directory}:`, e.message);
+        }
     }
 
     res.json({
         message: "Uploaded successfully",
-        filePath: filePath
+        filePath: filePath,
+        transcript: finalTranscript
     });
 });
 
@@ -99,13 +113,23 @@ async function processTranscription(directory, sessionId, className) {
 
     console.log(`📝 Sending to Gemini for transcription...`);
     const uploadResult = await client.files.upload({ file: audioPath });
-    const transcriptionCompletion = await client.interactions.create({
-        model: "gemini-3.5-flash",
-        system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
-        input: uploadResult
-    });
-    
-    const audioTranscription = transcriptionCompletion.output_text || "";
+    let audioTranscription = "";
+    try {
+        const transcriptionCompletion = await client.interactions.create({
+            model: "gemini-3.5-flash",
+            system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
+            input: uploadResult
+        });
+        audioTranscription = transcriptionCompletion.output_text || "";
+    } catch (e) {
+        console.warn("⚠️ Transcription primary model failed, falling back to gemini-2.5-flash...", e.message);
+        const fbCompletion = await client.interactions.create({
+            model: "gemini-2.5-flash",
+            system_instruction: "You are a professional audio transcriptionist. Transcribe the provided audio verbatim. Output ONLY the raw transcript text. Do not add any conversational text or formatting.",
+            input: uploadResult
+        });
+        audioTranscription = fbCompletion.output_text || "";
+    }
 
     // 📖 Combine with Chat History
     let fullTranscript = `--- SPOKEN AUDIO TRANSCRIPT ---\n${audioTranscription}\n\n`;
@@ -130,26 +154,33 @@ async function processTranscription(directory, sessionId, className) {
     console.log(`✅ Final transcription/chat log saved to ${transcriptionPath}`);
 
     console.log(`🤖 Generating summary...`);
-    const completion = await client.interactions.create({
-        model: "gemini-3.5-flash",
-        system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
-        input: fullTranscript
-    });
-
-    const summary = completion.output_text || "No summary generated.";
-    const summaryPath = path.join(directory, "summary.txt");
-    fs.writeFileSync(summaryPath, summary);
-    console.log(`✅ Summary saved to ${summaryPath}`);
-
+    let summary = "No summary generated.";
+    try {
+        const completion = await client.interactions.create({
+            model: "gemini-3.5-flash",
+            system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
+            input: fullTranscript
+        });
+        summary = completion.output_text || "No summary generated.";
+    } catch (e) {
+        console.warn("⚠️ Summary primary model failed, falling back to gemini-2.5-flash...", e.message);
+        const fbCompletion = await client.interactions.create({
+            model: "gemini-2.5-flash",
+            system_instruction: "You are an AI assistant helping a teacher. Summarize the following meeting content (Transcript AND Chat) into key points and action items. IMPORTANT: Use PLAIN TEXT ONLY. Do NOT use markdown bolding (like **text**), italics, or other markdown symbols. Do NOT include a 'Student Questions and Answers' section. Use standard numbering (1., 2., etc.) for lists.",
+            input: fullTranscript
+        });
+        summary = fbCompletion.output_text || "No summary generated.";
+    }
+    
     // Append summary to the full transcript
     fullTranscript += `\n--- CLASS SUMMARY ---\n${summary}\n`;
-    fs.writeFileSync(transcriptionPath, fullTranscript);
-    console.log(`✅ Class Summary appended to ${transcriptionPath}`);
 
     try {
         fs.unlinkSync(listFilePath);
         fs.unlinkSync(audioPath);
     } catch (e) { }
+
+    return fullTranscript;
 }
 
 function execPromise(command) {
