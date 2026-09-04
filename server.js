@@ -1332,7 +1332,36 @@ app.post("/api/generate-video", async (req, res) => {
     if (voiceId === "Male") mappedVoiceId = "google-cloud-tts-male";
     if (voiceId === "Female") mappedVoiceId = "google-cloud-tts-female";
 
-    // Step 2: Generate Video
+    const isLongVideo = (parseInt(durationMinutes, 10) || 5) >= 10 || (languages && languages.length > 1);
+
+    if (isLongVideo) {
+      console.log(`🎬 [VIDEO-GEN] Long video request (${durationMinutes}min, ${languages?.length || 0} langs). Dispatching background generation...`);
+      axios.post(`${VIDEOGEN_API}/api/videos/generate`, 
+        { 
+          text: scriptData.text,
+          format: 'landscape',
+          languages: JSON.stringify(languages || []),
+          voiceId: mappedVoiceId 
+        },
+        { timeout: 3600000 } // 60 minutes
+      ).then(videoResponse => {
+        console.log(`✅ [VIDEO-GEN] Background long video generated successfully. ID: ${videoResponse.data?.data?.id}`);
+      }).catch(err => {
+        console.error("❌ [VIDEO-GEN] Background video generation error:", err.response ? err.response.data : err.message);
+      });
+
+      return res.json({
+        success: true,
+        message: `Video generation started for ${durationMinutes}-minute lesson. Server is processing in background.`,
+        data: {
+          processing: true,
+          durationMinutes,
+          topic
+        }
+      });
+    }
+
+    // Short Video: Generate synchronously
     const videoResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate`, 
       { 
         text: scriptData.text,
