@@ -1296,7 +1296,8 @@ Rules:
 // ========================================
 // 🎬 Video Generation Integration (proxy to VideoGenerator server)
 // ========================================
-const VIDEOGEN_API = process.env.VIDEOGEN_API_URL || (process.env.NODE_ENV === 'production' ? 'https://videogenerator-backend-ws81.onrender.com' : 'http://localhost:5000');
+const rawVideogenUrl = process.env.VIDEOGEN_API_URL || (process.env.NODE_ENV === 'production' ? 'https://videogenerator-backend-ws81.onrender.com' : 'http://localhost:5000');
+const VIDEOGEN_API = rawVideogenUrl.replace(/\/+$/, '');
 
 // Proxy: Trigger one-shot video generation
 app.post("/api/generate-video", async (req, res) => {
