@@ -10,6 +10,9 @@ const ttsClient = new textToSpeech.TextToSpeechClient();
 const app = express();
 const port = process.env.PORT || 3001;
 
+let activeVoice = "Female"; // Default voice
+global.activeVoice = activeVoice;
+
 app.use(cors());
 app.use(express.json());
 
@@ -89,8 +92,6 @@ const path = require("path");
 // In-memory state for waiting and blocked students
 const waitingStudents = {}; // { requestId: { name, room, status: 'waiting' | 'admitted' | 'rejected', token, url } }
 const blockedStudents = new Set(); // Set of "roomName:studentName" or just globally? Let's do "roomName:studentName"
-let activeVoice = "Female"; // Default voice
-global.activeVoice = activeVoice;
 
 // In-memory activity summaries
 const studentActivitiesData = {}; // { roomName: { studentName: { awayTime, inactiveTime, backgroundTime, warningCount } } }
@@ -1361,21 +1362,36 @@ app.post("/api/generate-video", async (req, res) => {
       });
     }
 
-    // Short Video: Generate synchronously
-    const videoResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate`, 
-      { 
+    // Step 2 for short videos: Synchronously generate video
+    const videoResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate`,
+      {
         text: scriptData.text,
         format: 'landscape',
         languages: JSON.stringify(languages || []),
-        voiceId: mappedVoiceId 
+        voiceId: mappedVoiceId
       },
       { timeout: 1200000 } // 20 minutes
     );
-    
-    const videoData = videoResponse.data;
 
-    console.log(`✅ [VIDEO-GEN] Video generated successfully. ID: ${videoData.data?.id}`);
-    res.json(videoData);
+    const data = videoResponse.data;
+
+    // Convert relative URLs to absolute URLs using VIDEOGEN_API base origin
+    if (data && data.data) {
+      const baseUrl = VIDEOGEN_API.replace(/\/+$/, '');
+      if (data.data.videoUrl && data.data.videoUrl.startsWith('/')) {
+        data.data.videoUrl = `${baseUrl}${data.data.videoUrl}`;
+      }
+      if (data.data.videos) {
+        Object.keys(data.data.videos).forEach(lang => {
+          if (data.data.videos[lang].url && data.data.videos[lang].url.startsWith('/')) {
+            data.data.videos[lang].url = `${baseUrl}${data.data.videos[lang].url}`;
+          }
+        });
+      }
+    }
+
+    console.log(`✅ [VIDEO-GEN] Video generated successfully. ID: ${data.data?.id}`);
+    res.json(data);
   } catch (err) {
     console.error("❌ [VIDEO-GEN] Proxy error:", err.response ? err.response.data : err.message);
     res.status(err.response ? err.response.status : 500).json({ error: "Failed to generate video", details: err.message });
