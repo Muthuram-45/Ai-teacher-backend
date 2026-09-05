@@ -118,8 +118,6 @@ const roomService = new RoomServiceClient(
 // 🔒 Track rooms ended by teacher (in-memory)
 const endedRooms = new Set();
 
-const fs = require("fs");
-const path = require("path");
 
 // In-memory state for waiting and blocked students
 const waitingStudents = {}; // { requestId: { name, room, status: 'waiting' | 'admitted' | 'rejected', token, url } }
