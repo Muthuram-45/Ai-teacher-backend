@@ -5,7 +5,23 @@ const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const { GoogleGenAI } = require("@google/genai");
 const textToSpeech = require('@google-cloud/text-to-speech');
 const { logTokenUsage } = require("./utils/tokenLogger");
-const ttsClient = new textToSpeech.TextToSpeechClient();
+
+let ttsOptions = {};
+const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (process.env.GOOGLE_CREDENTIALS_JSON) {
+  try {
+    ttsOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+  } catch (err) {
+    console.error("❌ Error parsing GOOGLE_CREDENTIALS_JSON:", err.message);
+  }
+} else if (credsEnv && credsEnv.trim().startsWith('{')) {
+  try {
+    ttsOptions.credentials = JSON.parse(credsEnv);
+  } catch (err) {
+    console.error("❌ Error parsing GOOGLE_APPLICATION_CREDENTIALS as JSON:", err.message);
+  }
+}
+const ttsClient = new textToSpeech.TextToSpeechClient(ttsOptions);
 
 const app = express();
 const port = process.env.PORT || 3001;
