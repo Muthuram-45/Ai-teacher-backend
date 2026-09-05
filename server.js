@@ -5,22 +5,32 @@ const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const { GoogleGenAI } = require("@google/genai");
 const textToSpeech = require('@google-cloud/text-to-speech');
 const { logTokenUsage } = require("./utils/tokenLogger");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-let ttsOptions = {};
-const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-if (process.env.GOOGLE_CREDENTIALS_JSON) {
+// Handle JSON credentials from environment variables directly (e.g. on Render)
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.GOOGLE_APPLICATION_CREDENTIALS.trim().startsWith('{')) {
   try {
-    ttsOptions.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    const tmpPath = path.join(os.tmpdir(), 'google-creds.json');
+    fs.writeFileSync(tmpPath, process.env.GOOGLE_APPLICATION_CREDENTIALS);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
+    console.log("✅ Written JSON credentials to temporary file:", tmpPath);
   } catch (err) {
-    console.error("❌ Error parsing GOOGLE_CREDENTIALS_JSON:", err.message);
+    console.error("❌ Failed to write temporary credentials file:", err);
   }
-} else if (credsEnv && credsEnv.trim().startsWith('{')) {
+} else if (process.env.GOOGLE_CREDENTIALS_JSON) {
   try {
-    ttsOptions.credentials = JSON.parse(credsEnv);
+    const tmpPath = path.join(os.tmpdir(), 'google-creds.json');
+    fs.writeFileSync(tmpPath, process.env.GOOGLE_CREDENTIALS_JSON);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
+    console.log("✅ Written JSON credentials to temporary file:", tmpPath);
   } catch (err) {
-    console.error("❌ Error parsing GOOGLE_APPLICATION_CREDENTIALS as JSON:", err.message);
+    console.error("❌ Failed to write temporary credentials file:", err);
   }
 }
+
+let ttsOptions = {};
 const ttsClient = new textToSpeech.TextToSpeechClient(ttsOptions);
 
 const app = express();
@@ -64,11 +74,17 @@ app.post("/api/tts", async (req, res) => {
     const isMale = activeVoice === "Male";
     const genderSuffix = isMale ? "B" : "A"; // Wavenet-B is Male, Wavenet-A is Female in most IN locales
     
+    // Wavenet voices might not exist for some regional languages, fallback to Standard
+    let voiceName = `${locale}-Wavenet-${genderSuffix}`;
+    if (locale === 'te-IN' || locale === 'ml-IN' || locale === 'kn-IN' || locale === 'ta-IN') {
+      voiceName = `${locale}-Standard-${genderSuffix}`;
+    }
+
     // Construct request
     const request = {
       input: { text: text },
       // Select the language and SSML voice gender
-      voice: { languageCode: locale, name: `${locale}-Wavenet-${genderSuffix}` },
+      voice: { languageCode: locale, name: voiceName },
       // select the type of audio encoding
       audioConfig: { audioEncoding: 'MP3' },
     };
