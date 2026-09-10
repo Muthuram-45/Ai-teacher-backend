@@ -1384,13 +1384,22 @@ app.post("/api/generate-video", async (req, res) => {
       { timeout: 1200000 } // 20 minutes
     );
     
-    const scriptData = scriptResponse.data;
+    const rawScriptData = scriptResponse.data;
     
-    if (!scriptData.success) {
-      console.error(`❌ [VIDEO-GEN] Script generation failed:`, scriptData);
-      return res.status(500).json(scriptData);
+    if (!rawScriptData || !rawScriptData.success) {
+      console.error(`❌ [VIDEO-GEN] Script generation failed:`, rawScriptData);
+      return res.status(500).json(rawScriptData || { error: "Script generation failed" });
+    }
+
+    const scriptData = rawScriptData.data || rawScriptData;
+    const scriptText = scriptData.text;
+
+    if (!scriptText) {
+      console.error(`❌ [VIDEO-GEN] Script generated but text is missing:`, rawScriptData);
+      return res.status(500).json({ error: "Script generation succeeded but returned empty text" });
     }
     
+    console.log(`🎬 [VIDEO-GEN] Script generated successfully. Text length: ${scriptText.length}`);
     console.log(`🎬 [VIDEO-GEN] Step 2: Generating video with languages=${languages?.join(',')}, voiceId=${voiceId}`);
     
     // Map Frontend "Male" / "Female" to Videogenerator expected values
@@ -1405,7 +1414,7 @@ app.post("/api/generate-video", async (req, res) => {
     if (isLongVideo) {
       console.log(`🎬 [VIDEO-GEN] Long video request (${durationMinutes}min, ${languages?.length || 0} langs). Dispatching background generation...`);
       const longForm = new FormData();
-      longForm.append('text', scriptData.text);
+      longForm.append('text', scriptText);
       longForm.append('format', 'landscape');
       longForm.append('languages', JSON.stringify(languages || []));
       if (mappedVoiceId) {
@@ -1439,7 +1448,7 @@ app.post("/api/generate-video", async (req, res) => {
 
     // Step 2 for short videos: Synchronously generate video
     const form = new FormData();
-    form.append('text', scriptData.text);
+    form.append('text', scriptText);
     form.append('format', 'landscape');
     form.append('languages', JSON.stringify(languages || []));
     if (mappedVoiceId) {
