@@ -1398,18 +1398,28 @@ app.post("/api/generate-video", async (req, res) => {
     if (voiceId === "Male") mappedVoiceId = "google-cloud-tts-male";
     if (voiceId === "Female") mappedVoiceId = "google-cloud-tts-female";
 
+    const FormData = require('form-data');
+
     const isLongVideo = (parseInt(durationMinutes, 10) || 5) >= 10 || (languages && languages.length > 1);
 
     if (isLongVideo) {
       console.log(`🎬 [VIDEO-GEN] Long video request (${durationMinutes}min, ${languages?.length || 0} langs). Dispatching background generation...`);
+      const longForm = new FormData();
+      longForm.append('text', scriptData.text);
+      longForm.append('format', 'landscape');
+      longForm.append('languages', JSON.stringify(languages || []));
+      if (mappedVoiceId) {
+        longForm.append('voiceId', mappedVoiceId);
+      }
+
       axios.post(`${VIDEOGEN_API}/api/videos/generate`, 
+        longForm,
         { 
-          text: scriptData.text,
-          format: 'landscape',
-          languages: JSON.stringify(languages || []),
-          voiceId: mappedVoiceId 
-        },
-        { timeout: 3600000 } // 60 minutes
+          headers: longForm.getHeaders(),
+          timeout: 3600000, // 60 minutes
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        }
       ).then(videoResponse => {
         console.log(`✅ [VIDEO-GEN] Background long video generated successfully. ID: ${videoResponse.data?.data?.id}`);
       }).catch(err => {
@@ -1428,14 +1438,23 @@ app.post("/api/generate-video", async (req, res) => {
     }
 
     // Step 2 for short videos: Synchronously generate video
-    const videoResponse = await axios.post(`${VIDEOGEN_API}/api/videos/generate`,
+    const form = new FormData();
+    form.append('text', scriptData.text);
+    form.append('format', 'landscape');
+    form.append('languages', JSON.stringify(languages || []));
+    if (mappedVoiceId) {
+      form.append('voiceId', mappedVoiceId);
+    }
+
+    const videoResponse = await axios.post(
+      `${VIDEOGEN_API}/api/videos/generate`,
+      form,
       {
-        text: scriptData.text,
-        format: 'landscape',
-        languages: JSON.stringify(languages || []),
-        voiceId: mappedVoiceId
-      },
-      { timeout: 1200000 } // 20 minutes
+        headers: form.getHeaders(),
+        timeout: 1200000, // 20 minutes
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
+      }
     );
 
     const data = videoResponse.data;

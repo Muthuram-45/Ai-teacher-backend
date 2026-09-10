@@ -32,7 +32,7 @@ steps:
       - '--max-instances=5'
       - '--timeout=300s'
       - '--cpu-boost'
-      - '--set-env-vars=NODE_ENV=production,GOOGLE_CLOUD_PROJECT=sky-meet-01,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_STORAGE_BUCKET=sky-meet-01-video-generator,LIVEKIT_URL=wss://meet-vrmadeb4.livekit.cloud,VIDEOGEN_API_URL=https://video-generator-backend-891990564907.asia-south1.run.app,FRONTEND_URL=https://ai-teacher-frontend-phi.vercel.app/,EMAIL_USER=muthuram921@gmail.com'
+      - '--set-env-vars=NODE_ENV=production,GOOGLE_CLOUD_PROJECT=sky-meet-01,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_STORAGE_BUCKET=sky-meet-01-video-generator,LIVEKIT_URL=wss://meet-vrmadeb4.livekit.cloud,VIDEOGEN_API_URL=https://video-generator-backend-891990564907.asia-south1.run.app,FRONTEND_URL=https://ai-teacher-frontend-phi.vercel.app,EMAIL_USER=muthuram921@gmail.com'
       - '--set-secrets=LIVEKIT_API_KEY=LIVEKIT_API_KEY:1,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:1,EMAIL_PASS=EMAIL_PASS:1'
 
 # Images to store in Cloud Build build cache / build records
