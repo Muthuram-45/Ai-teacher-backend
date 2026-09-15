@@ -1,0 +1,43 @@
+steps:
+  # Step 1: Build Docker Image using existing Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/sky-meet-01/ai-teacher-backend/ai-teacher-backend:$COMMIT_SHA'
+      - '.'
+
+  # Step 2: Push Image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/sky-meet-01/ai-teacher-backend/ai-teacher-backend:$COMMIT_SHA'
+
+  # Step 3: Deploy to Google Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ai-teacher-backend'
+      - '--image=asia-south1-docker.pkg.dev/sky-meet-01/ai-teacher-backend/ai-teacher-backend:$COMMIT_SHA'
+      - '--region=asia-south1'
+      - '--platform=managed'
+      - '--port=8080'
+      - '--allow-unauthenticated'
+      - '--service-account=ai-teacher-run@sky-meet-01.iam.gserviceaccount.com'
+      - '--cpu=1'
+      - '--memory=1Gi'
+      - '--min-instances=0'
+      - '--max-instances=5'
+      - '--timeout=300s'
+      - '--cpu-boost'
+      - '--set-env-vars=NODE_ENV=production,GOOGLE_CLOUD_PROJECT=sky-meet-01,GOOGLE_CLOUD_LOCATION=global,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_STORAGE_BUCKET=sky-meet-01-video-generator,LIVEKIT_URL=wss://meet-vrmadeb4.livekit.cloud,VIDEOGEN_API_URL=https://video-generator-backend-891990564907.asia-south1.run.app,FRONTEND_URL=https://ai-teacher-frontend-phi.vercel.app,EMAIL_USER=muthuram921@gmail.com'
+      - '--set-secrets=LIVEKIT_API_KEY=LIVEKIT_API_KEY:1,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:1,EMAIL_PASS=EMAIL_PASS:1'
+
+# Images to store in Cloud Build build cache / build records
+images:
+  - 'asia-south1-docker.pkg.dev/sky-meet-01/ai-teacher-backend/ai-teacher-backend:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

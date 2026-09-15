@@ -2,15 +2,19 @@ const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { exec } = require("child_process");
 const { GoogleGenAI } = require("@google/genai");
 const { Storage } = require("@google-cloud/storage");
 const { logTokenUsage } = require("../utils/tokenLogger");
 
-const client = new GoogleGenAI({
-    vertexai: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true',
+const useVertexAI = process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true';
+const client = new GoogleGenAI(useVertexAI ? {
+    vertexai: true,
     project: process.env.GOOGLE_CLOUD_PROJECT,
     location: process.env.GOOGLE_CLOUD_LOCATION || "global",
+} : {
+    apiKey: process.env.GEMINI_API_KEY,
 });
 
 const router = express.Router();
@@ -23,9 +27,10 @@ const storage = multer.diskStorage({
 
         const sessionId = req.body.sessionId || "default";
 
+        // Use os.tmpdir() for Cloud Run compatibility (ephemeral /tmp filesystem).
+        // Files are uploaded to GCS for transcription and then cleaned up.
         const basePath = path.join(
-            __dirname,
-            "..",
+            os.tmpdir(),
             "ClassRecordings",
             today,
             className,

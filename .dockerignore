@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+README.md
+*.log
+ClassRecordings/
+google-creds.json
+*-credentials.json
+*-service-account.json
+fix.js
