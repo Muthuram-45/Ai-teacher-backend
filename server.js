@@ -50,6 +50,10 @@ app.use("/api", uploadroutes);
 const authRoutes = require("./Route/authRoutes");
 app.use("/api/auth", authRoutes);
 
+// Import and use analytics routes
+const analyticsRoutes = require("./Route/analyticsRoutes");
+app.use("/api/analytics", analyticsRoutes);
+
 // Import and use multilingual routes
 const multilingualRoutes = require("./Multilingual/translationGateway");
 app.use("/api/multilingual", multilingualRoutes);
@@ -1133,6 +1137,7 @@ app.post("/api/activity-sync", (req, res) => {
 // 📥 Download Activity History XLSX (Styled)
 app.get("/api/activity-history/:roomName", async (req, res) => {
   const { roomName } = req.params;
+  const { className, topic } = req.query;
   const roomData = studentActivitiesData[roomName];
 
   if (!roomData) {
@@ -1152,9 +1157,16 @@ app.get("/api/activity-history/:roomName", async (req, res) => {
     { key: 'warnings', width: 18 }
   ];
 
+  // Add Metadata
+  const topicRow = worksheet.addRow(['Topic:', className || 'General']);
+  topicRow.getCell(1).font = { bold: true };
+  const subTopicRow = worksheet.addRow(['Sub Topic:', topic || 'General']);
+  subTopicRow.getCell(1).font = { bold: true };
+  worksheet.addRow([]); // Empty row
+
   // Add "ACTIVITY DETAILS" header row
-  worksheet.mergeCells('A1:E1');
-  const titleCell = worksheet.getCell('A1');
+  worksheet.mergeCells('A4:E4');
+  const titleCell = worksheet.getCell('A4');
   titleCell.value = 'ACTIVITY DETAILS';
   titleCell.font = { bold: true, size: 12 };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1163,7 +1175,7 @@ app.get("/api/activity-history/:roomName", async (req, res) => {
     pattern: 'solid',
     fgColor: { argb: 'FFFFFF00' } // Yellow background
   };
-  worksheet.getRow(1).height = 25;
+  worksheet.getRow(4).height = 25;
 
   // Add Column Headers
   const headerRow = worksheet.addRow([
@@ -1178,7 +1190,7 @@ app.get("/api/activity-history/:roomName", async (req, res) => {
     cell.font = { bold: true };
     cell.alignment = { horizontal: 'left', vertical: 'middle' };
   });
-  worksheet.getRow(2).height = 20;
+  worksheet.getRow(5).height = 20;
 
   // Add Data Rows
   for (const [studentName, data] of Object.entries(roomData)) {
