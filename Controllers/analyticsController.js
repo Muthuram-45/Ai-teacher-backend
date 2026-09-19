@@ -3,10 +3,13 @@ const xlsx = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const { GoogleGenAI } = require("@google/genai");
 
-const client = new GoogleGenAI({
-  vertexai: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true',
+const useVertexAI = process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true';
+const client = new GoogleGenAI(useVertexAI ? {
+  vertexai: true,
   project: process.env.GOOGLE_CLOUD_PROJECT,
   location: process.env.GOOGLE_CLOUD_LOCATION || "global",
+} : {
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
 const normalizeName = (name) => {

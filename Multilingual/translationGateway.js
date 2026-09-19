@@ -76,17 +76,28 @@ router.post('/remove-student', (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/translate-text', async (req, res) => {
-  const { text, targetLanguage } = req.body;
-  if (!text || !targetLanguage || targetLanguage === 'en') {
-    return res.json({ translatedText: text });
+const multilingualOrchestrator = require('./multilingualOrchestrator');
+
+router.post('/prepare-package', async (req, res) => {
+  const { roomName, answerId, canonicalAnswer, isDirectResponse, speakerName, questionText, bufferMs } = req.body;
+  if (!canonicalAnswer) {
+    return res.status(400).json({ error: "canonicalAnswer is required" });
   }
+
   try {
-    const translated = await TranslationService.translate(text, targetLanguage);
-    res.json({ translatedText: translated });
+    const packagePayload = await multilingualOrchestrator.prepareMultilingualPackage(
+      roomName || "default-room",
+      answerId || `ans-${Date.now()}`,
+      canonicalAnswer,
+      isDirectResponse || false,
+      speakerName || "Student",
+      questionText || "",
+      bufferMs || 2500
+    );
+    res.json(packagePayload);
   } catch (error) {
-    console.error("Text Translation Error:", error);
-    res.json({ translatedText: text });
+    console.error("Multilingual Package Error:", error);
+    res.status(500).json({ error: "Failed to generate multilingual package" });
   }
 });
 

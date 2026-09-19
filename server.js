@@ -88,13 +88,17 @@ app.use("/api/analytics", analyticsRoutes);
 const multilingualRoutes = require("./Multilingual/translationGateway");
 app.use("/api/multilingual", multilingualRoutes);
 
+const { sanitizeTextForTTS } = require("./Multilingual/ttsSanitizer");
+
 // 🔊 TTS Endpoint using Google Cloud TTS
 app.post("/api/tts", async (req, res) => {
-  try {
-    const text = req.body.text;
-    const lang = req.body.lang || 'en';
-    if (!text) return res.status(400).send("Text is required");
+  const rawText = req.body.text;
+  const lang = req.body.lang || 'en';
+  if (!rawText) return res.status(400).send("Text is required");
 
+  const text = sanitizeTextForTTS(rawText, lang);
+
+  try {
     const localeMap = {
       'en': 'en-IN',
       'hi': 'hi-IN',
@@ -132,8 +136,25 @@ app.post("/api/tts", async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*"); // explicitly allow for recording mix
     res.send(response.audioContent);
   } catch (err) {
-    console.error("❌ Google Cloud TTS Error:", err);
-    res.status(500).send("Google Cloud TTS failed");
+    console.warn("⚠️ Google Cloud TTS unavailable (using free fallback TTS):", err.message);
+    try {
+      const locale = (lang || 'en').split('-')[0];
+      const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text.substring(0, 200))}&tl=${locale}&client=tw-ob`;
+      const ttsRes = await fetch(fallbackUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        }
+      });
+      if (ttsRes.ok) {
+        const audioBuffer = await ttsRes.arrayBuffer();
+        res.set("Content-Type", "audio/mpeg");
+        res.set("Access-Control-Allow-Origin", "*");
+        return res.send(Buffer.from(audioBuffer));
+      }
+    } catch (fallbackErr) {
+      console.error("❌ Fallback TTS error:", fallbackErr.message);
+    }
+    res.status(503).json({ error: "TTS service unavailable", fallback: true });
   }
 });
 
@@ -494,7 +515,7 @@ Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ
     };
     const langName = languageMap[preferredLanguage] || preferredLanguage;
 
-    const languageStr = preferredLanguage && preferredLanguage !== 'en' ? `You MUST answer in the following language: \n${langName}\n` : "You must answer in English.";
+    const languageStr = "You must answer in English.";
 
     console.log(`\n\n===========================================`);
     console.log(`[ASK-AI] Received Request for Student: ${student}`);
@@ -694,15 +715,27 @@ For \`OFF_TOPIC\` (You MUST return exactly this English response):
 For \`IGNORE\`:
 { "category": "IGNORE", "response": "" }`;
 
-    const validationResponse = await client.models.generateContent({
-      model: "gemini-3.5-flash-lite",
-      contents: "Classify the student's message and generate the appropriate response if needed.",
-      config: {
-          systemInstruction: validationPrompt,
-      }
-    });
-    
-    logTokenUsage("gemini-3.5-flash-lite", validationResponse.usageMetadata);
+    let validationResponse;
+    try {
+      validationResponse = await client.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: "Classify the student's message and generate the appropriate response if needed.",
+        config: {
+            systemInstruction: validationPrompt,
+        }
+      });
+      logTokenUsage("gemini-2.5-flash", validationResponse.usageMetadata);
+    } catch (vErr) {
+      console.warn("⚠️ Validation model gemini-2.5-flash failed, trying gemini-1.5-flash:", vErr.message);
+      validationResponse = await client.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: "Classify the student's message and generate the appropriate response if needed.",
+        config: {
+            systemInstruction: validationPrompt,
+        }
+      });
+      logTokenUsage("gemini-1.5-flash", validationResponse.usageMetadata);
+    }
 
     let classification = { category: "YES" };
     try {
@@ -761,30 +794,42 @@ For \`IGNORE\`:
     // 🤖 2. Answer the Question
     const topicContext = `The current class context is: "${classContext}".`;
 
-    const completion = await client.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: question,
-      config: {
-          systemInstruction: `You are a strict but friendly classroom Teacher. ${topicContext} ` +
-            "RULES: " +
-            "1. Give a clear, direct answer to the student's question. " +
-            "2. Provide a detailed but concise explanation (around 3 to 5 sentences). " +
-            "3. Never use 'Namaste', 'Ji', or any cultural/regional words. " +
-            "4. Never use filler openers like 'Great question!' or 'Of course!'. " +
-            "5. Go straight to the point. " +
-            "6. Use the EXACT technical terms the student asked about instead of substituting them with synonyms. " +
-            `7. You MUST start your answer by addressing the student by their name: '${student}' (e.g. '${student}, logical reasoning is...'). ` +
-            languageStr,
-      }
-    });
+    let completion;
+    let modelUsed = "gemini-2.5-flash";
+    const systemInstruction = `You are a strict but friendly classroom Teacher. ${topicContext} ` +
+      "RULES: " +
+      "1. Give a clear, direct answer to the student's question. " +
+      "2. Provide a detailed but concise explanation (around 3 to 5 sentences). " +
+      "3. Never use 'Namaste', 'Ji', or any cultural/regional words. " +
+      "4. Never use filler openers like 'Great question!' or 'Of course!'. " +
+      "5. Go straight to the point. " +
+      "6. Use the EXACT technical terms the student asked about instead of substituting them with synonyms. " +
+      `7. You MUST start your answer by addressing the student by their name: '${student}' (e.g. '${student}, logical reasoning is...'). ` +
+      languageStr;
+
+    try {
+      completion = await client.models.generateContent({
+        model: modelUsed,
+        contents: question,
+        config: { systemInstruction }
+      });
+    } catch (primaryErr) {
+      console.warn(`⚠️ [ASK-AI] ${modelUsed} failed (${primaryErr.message}). Trying fallback gemini-1.5-flash...`);
+      modelUsed = "gemini-1.5-flash";
+      completion = await client.models.generateContent({
+        model: modelUsed,
+        contents: question,
+        config: { systemInstruction }
+      });
+    }
 
     const answer = completion.text;
-    logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
-    console.log(`[ASK-AI] Answer generated:\n${answer}\n`);
+    logTokenUsage(modelUsed, completion.usageMetadata);
+    console.log(`[ASK-AI] Answer generated using ${modelUsed}:\n${answer}\n`);
 
     res.json({ answer });
   } catch (err) {
-    console.error("❌ GROQ ERROR:", err);
+    console.error("❌ AI ERROR:", err);
     res.status(500).json({ error: "AI response failed" });
   }
 });

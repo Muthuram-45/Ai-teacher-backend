@@ -23,7 +23,7 @@ class STTService {
     try {
       const fileBase64 = audioBuffer.toString("base64");
       const transcriptionCompletion = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: [
             { inlineData: { data: fileBase64, mimeType: mimetype } }
         ],
@@ -32,7 +32,7 @@ class STTService {
         }
       });
       
-      logTokenUsage("gemini-3.5-flash", transcriptionCompletion.usageMetadata);
+      logTokenUsage("gemini-2.5-flash", transcriptionCompletion.usageMetadata);
       return { text: transcriptionCompletion.text || "" };
     } catch (error) {
       console.error("STT Error:", error);
@@ -130,15 +130,29 @@ Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ
     const prompt = `Translate the following text to ${langName}. Return ONLY the translated text, without any additional comments, quotes or formatting:\n\n"${text}"`;
     
     try {
-      const completion = await client.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-            systemInstruction: "You are a professional translator. Provide direct translations without any meta-text.",
-        }
-      });
+      let modelUsed = "gemini-2.5-flash";
+      let completion;
+      try {
+        completion = await client.models.generateContent({
+          model: modelUsed,
+          contents: prompt,
+          config: {
+              systemInstruction: "You are a professional translator. Provide direct translations without any meta-text.",
+          }
+        });
+      } catch (primaryErr) {
+        console.warn(`⚠️ [Translation] ${modelUsed} failed (${primaryErr.message}). Trying fallback...`);
+        modelUsed = "gemini-1.5-flash";
+        completion = await client.models.generateContent({
+          model: modelUsed,
+          contents: prompt,
+          config: {
+              systemInstruction: "You are a professional translator. Provide direct translations without any meta-text.",
+          }
+        });
+      }
       
-      logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
+      logTokenUsage(modelUsed, completion.usageMetadata);
       let translated = completion.text?.trim();
       // Clean up if it starts/ends with quotes
       translated = translated.replace(/^"|"$/g, "");
