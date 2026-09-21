@@ -596,7 +596,10 @@ Examples (for Broad Topic: Python, Subtopic: OOP):
 - "What is Django?" -> DIFFERENT_SPECIFIC_TOPIC
 - "What is exception handling?" -> DIFFERENT_SPECIFIC_TOPIC
 
-For DIFFERENT_SPECIFIC_TOPIC, do NOT teach or explain the concept. Return a polite schedule response:
+CRITICAL NAMING RULE:
+You MUST refer to the concept as an important \`${broadTopic}\` topic, NOT as a \`${subtopic}\` topic.
+For example, "lists" is a Python topic, NOT an OOP topic!
+Response MUST be:
 "That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class."
 
 ## 4. OFF_TOPIC — Completely Unrelated Questions
@@ -622,7 +625,7 @@ For \`YES\`:
 { "category": "YES" }
 
 For \`BROAD_TOPIC_OVERVIEW\`:
-{ "category": "BROAD_TOPIC_OVERVIEW", "response": "<2-4 sentence overview ending with current subtopic reminder>" }
+{ "category": "BROAD_TOPIC_OVERVIEW", "response": "<2-4 sentence overview ending with: In this class, however, we're currently focusing on ${subtopic}.>" }
 
 For \`DIFFERENT_SPECIFIC_TOPIC\`:
 { "category": "DIFFERENT_SPECIFIC_TOPIC", "response": "That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class." }
@@ -716,8 +719,8 @@ For \`IGNORE\`:
 
     if (classification.category === "DIFFERENT_SPECIFIC_TOPIC") {
       console.log(`[ASK-AI] Responding to DIFFERENT_SPECIFIC_TOPIC.`);
-      const defaultResp = `That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class.`;
-      return res.json({ answer: classification.response || defaultResp, isDirectResponse: true });
+      const resp = `That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class.`;
+      return res.json({ answer: resp, isDirectResponse: true });
     }
 
     if (classification.category === "OFF_TOPIC") {
