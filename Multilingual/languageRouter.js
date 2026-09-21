@@ -6,8 +6,6 @@ class LanguageRouter {
   }
 
   addStudent(roomName, studentId, language) {
-    if (language === 'en') return; // Default/original audio, no need to track for translation
-
     if (!this.rooms[roomName]) {
       this.rooms[roomName] = {
         languages: {},
@@ -24,12 +22,14 @@ class LanguageRouter {
 
     room.students[studentId] = language;
 
-    if (!room.languages[language]) {
-      room.languages[language] = 0;
+    if (language !== 'en') {
+      if (!room.languages[language]) {
+        room.languages[language] = 0;
+      }
+      room.languages[language]++;
     }
-    room.languages[language]++;
     
-    console.log(`[LanguageRouter] Student ${studentId} added/switched to ${language} in ${roomName}. Active count for ${language}: ${room.languages[language]}`);
+    console.log(`[LanguageRouter] Student ${studentId} added/switched to ${language} in ${roomName}. Active count for ${language}: ${room.languages[language] || 0}`);
   }
 
   removeStudent(roomName, studentId) {

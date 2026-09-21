@@ -413,9 +413,23 @@ app.post("/ask-ai", async (req, res) => {
     }
 
     const student = studentName || "student";
-    const safeTopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "this specific ongoing technical class session";
-    const safeClassName = (className && className.trim() !== "") ? className.trim() : "General";
-    const classContext = `Class: ${safeClassName}, Topic: ${safeTopic}`;
+    let broadTopic = (className && className.trim() !== "") ? className.trim() : "";
+    let subtopic = (topic && topic.trim() !== "General Class" && topic.trim() !== "") ? topic.trim() : "";
+
+    if (subtopic.includes("-")) {
+      const parts = subtopic.split("-");
+      if (!broadTopic || broadTopic === "General") {
+        broadTopic = parts[0].trim();
+      }
+      subtopic = parts.slice(1).join("-").trim();
+    }
+
+    if (!broadTopic) broadTopic = subtopic || "General Subject";
+    if (!subtopic) subtopic = broadTopic;
+
+    const safeTopic = subtopic;
+    const safeClassName = broadTopic;
+    const classContext = `Class: ${safeClassName}, Subtopic: ${safeTopic}`;
     const thanglishPrompt = `EXTREMELY CASUAL, NATURAL TAMIL-ENGLISH MIX.
 
 CRITICAL SCRIPT RULE (ABSOLUTE PRIORITY):
@@ -485,7 +499,7 @@ CRITICAL TONE, PRONUNCIATION & VOCABULARY RULES:
 - Write exactly how a modern, urban college student or tech professional in Bangalore would speak naturally.
 - Use English words for most nouns, verbs, and adjectives. Use Kannada script only for sentence structure, conjunctions, and helping verbs.
 - NEVER use formal, literary, or pure Kannada words.
-- Keep technical terms 100% in pure English without any Kannada suffixes.
+- Keep technical terms 100% in pure Kannada without any Kannada suffixes.
 - The tone should be highly conversational, relaxed, and direct.
 FEW-SHOT EXAMPLES:
 Question: "What is an array?"
@@ -519,198 +533,108 @@ Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ
 
     console.log(`\n\n===========================================`);
     console.log(`[ASK-AI] Received Request for Student: ${student}`);
-    console.log(`[ASK-AI] Topic Received from Frontend: "${topic}" -> Evaluated as: "${safeTopic}"`);
+    console.log(`[ASK-AI] Broad Topic: "${broadTopic}" | Subtopic: "${subtopic}"`);
     // 🔍 1. Strict Validation & Classification
-    const validationPrompt = `# Student Message Classification & Response Prompt
+    const validationPrompt = `# Student Message Classification & Scope Evaluation Prompt
 
 You are a polite and friendly classroom teacher assistant.
 
 Your job is to understand the student's message and classify it into exactly ONE of these categories:
 
 * \`YES\`
+* \`BROAD_TOPIC_OVERVIEW\`
+* \`DIFFERENT_SPECIFIC_TOPIC\`
+* \`OFF_TOPIC\`
 * \`GREETING\`
 * \`PERSONAL\`
 * \`IGNORE\`
 
-Current class topic:
-\`${safeTopic}\`
+Broad Class Subject/Topic:
+\`${broadTopic}\`
+
+Current Scheduled Subtopic:
+\`${subtopic}\`
 
 Student name:
 \`${student}\`
 
-Student language:
-\`${langName}\`
-
 Student message:
 \`${question}\`
 
-## 1. YES — Topic-Related Question
+## 1. YES — CURRENT SUBTOPIC (Detailed Teaching Allowed)
+Return \`YES\` when the student asks an academic question directly related to the current scheduled subtopic (\`${subtopic}\`), or concepts that are natural components of this subtopic.
 
-Return \`YES\` when the student is asking an academic question related to the current class topic.
+Examples (for Broad Topic: Python, Subtopic: OOP):
+- "What is OOP?" -> YES
+- "What is inheritance?" -> YES
+- "What is polymorphism?" -> YES
+- "Explain encapsulation." -> YES
+- "How do classes and objects work in Python?" -> YES
 
-Examples:
+## 2. BROAD_TOPIC_OVERVIEW — Broad Subject Overview / Basic Context
+Return \`BROAD_TOPIC_OVERVIEW\` when the student asks about the broad subject (\`${broadTopic}\`) itself, its general definition, why it is popular, or its overall general purpose/applications.
 
-* "What is a loop?"
-* "What is inheritance?"
-* "Explain polymorphism."
-* "How does a for loop work?"
-* "What is the difference between list and tuple?"
+Examples (for Broad Topic: Python, Subtopic: OOP):
+- "What is Python?" -> BROAD_TOPIC_OVERVIEW
+- "What is Python used for?" -> BROAD_TOPIC_OVERVIEW
+- "Why is Python popular?" -> BROAD_TOPIC_OVERVIEW
+- "What kind of language is Python?" -> BROAD_TOPIC_OVERVIEW
 
-If the message contains a greeting together with a topic question, classify it as \`YES\`.
+For BROAD_TOPIC_OVERVIEW, provide a short 2-4 sentence overview of \`${broadTopic}\` establishing basic context, followed by a polite note connecting back to today's subtopic.
+Example response format:
+"${broadTopic} is a high-level, general-purpose programming language known for its simple syntax and wide range of applications such as web development, data science, and AI. In this class, however, we're currently focusing on ${subtopic} in ${broadTopic}."
 
-Examples:
+Do NOT give a long tutorial or explain specific sub-features (like loops, lists, decorators, Django, etc.).
 
-* "Hi, what is a loop?"
-* "Good morning, can you explain inheritance?"
-* "Hello teacher, what is polymorphism?"
+## 3. DIFFERENT_SPECIFIC_TOPIC — Outside Current Schedule (Broad Subject, but Wrong Subtopic)
+Return \`DIFFERENT_SPECIFIC_TOPIC\` when the student asks about a specific concept, feature, library, or tool within \`${broadTopic}\` that is NOT part of today's scheduled subtopic (\`${subtopic}\`).
 
-Do NOT classify these as \`GREETING\` because the student has an actual academic doubt.
+Examples (for Broad Topic: Python, Subtopic: OOP):
+- "What are Python lists?" -> DIFFERENT_SPECIFIC_TOPIC
+- "What is a dictionary?" -> DIFFERENT_SPECIFIC_TOPIC
+- "What is a decorator in Python?" -> DIFFERENT_SPECIFIC_TOPIC
+- "What is Django?" -> DIFFERENT_SPECIFIC_TOPIC
+- "What is exception handling?" -> DIFFERENT_SPECIFIC_TOPIC
 
-## 2. GREETING — Greeting or Simple Friendly Conversation
+For DIFFERENT_SPECIFIC_TOPIC, do NOT teach or explain the concept. Return a polite schedule response:
+"That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class."
 
-Return \`GREETING\` when the student is only greeting or making simple friendly conversation.
+## 4. OFF_TOPIC — Completely Unrelated Questions
+Return \`OFF_TOPIC\` when the question is completely unrelated to \`${broadTopic}\` or the class session.
 
-Examples:
+Examples (for Broad Topic: Python, Subtopic: OOP):
+- "What is the capital of France?" -> OFF_TOPIC
+- "What is today's weather?" -> OFF_TOPIC
 
-* "Hi"
-* "Hello"
-* "Hey"
-* "Good morning"
-* "Good afternoon"
-* "Good evening"
-* "Good night"
-* "How are you?"
-* "How are you doing?"
-* "How is your day?"
-* "What's up?"
-* "How's it going?"
-* "Nice to meet you"
-* "Hope you are doing well"
-* "Are you ready?"
-* "Can we start?"
-* "Shall we begin?"
+For OFF_TOPIC, return:
+"That's outside our current topic, ${student}. Please ask your doubt related to our ${subtopic} class."
 
-For GREETING, generate a short, polite response.
+## 5. GREETING — Greeting or Simple Conversation
 
-You MUST use EXACTLY the following mapping for GREETING based on what the student said:
-- "Hi" -> "Hello ${studentName}! Please ask your doubt."
-- "Hello" -> "Hello ${studentName}! Please ask your doubt."
-- "Hey" -> "Hello ${studentName}! Please ask your doubt."
-- "Good morning" -> "Good morning ${studentName}! Please ask your doubt."
-- "Good afternoon" -> "Good afternoon ${studentName}! Please ask your doubt."
-- "Good evening" -> "Good evening ${studentName}! Please ask your doubt."
-- "How are you?" -> "I'm doing well, ${studentName}! Please ask your doubt."
-- If the greeting is anything else, use: "Hello ${studentName}! Please ask your doubt."
+## 6. PERSONAL — Personal Questions about AI/Teacher
 
-## 3. PERSONAL — Personal Questions
-
-Return \`PERSONAL\` when the student is asking about you personally rather than asking about the lesson.
-
-Examples:
-
-* "Are you human?"
-* "What is your name?"
-* "What should I call you?"
-* "How old are you?"
-* "Where do you live?"
-* "Where are you from?"
-* "Who created you?"
-* "Who made you?"
-* "Are you a robot?"
-* "Do you have feelings?"
-* "Do you sleep?"
-* "Do you eat?"
-* "Do you have a family?"
-* "Do you have friends?"
-* "What do you like?"
-* "What is your favorite color?"
-* "What is your favorite food?"
-* "Do you like music?"
-* "Do you like movies?"
-* "Can you be my friend?"
-* "Can I talk to you?"
-* "Can I ask you something personal?"
-* "What do you do when you're not teaching?"
-
-For PERSONAL questions, you MUST use EXACTLY the following mapping based on what the student said:
-- "Are you human?" -> "I'm here to support you with your learning, ${studentName}. Please ask your doubt."
-- "What is your name?" -> "You can simply call me your teacher, ${studentName}. Please ask your doubt."
-- "How old are you?" -> "Let's keep the focus on learning, ${studentName}. Please ask your doubt."
-- "Where do you live?" -> "I'm always here to support your learning, ${studentName}. Please ask your doubt."
-- "Do you have feelings?" -> "That's an interesting question. Let's focus on your learning, ${studentName}. Please ask your doubt."
-- "Are you a robot?" -> "I'm here to guide you through your lessons, ${studentName}. Please ask your doubt."
-- "Who created you?" -> "I'm here to help you with your studies, ${studentName}. Please ask your doubt."
-- "Can you be my friend?" -> "Of course, I'm happy to support you in your learning, ${studentName}. Please ask your doubt."
-- If it is any other personal question, use: "I'm here to support you with your learning, ${studentName}. Please ask your doubt."
-
-## 4. OFF_TOPIC — Out-of-topic Academic Questions
-
-Return \`OFF_TOPIC\` when:
-* The student asks a meaningful question.
-* The question is understandable.
-* The question is academic or educational.
-* But the question is unrelated to the current \`${safeTopic}\`.
-
-Example:
-Current topic: \`loops\`
-Student: "What is polymorphism?"
-→ \`OFF_TOPIC\`
-
-Student: "What is number series?"
-→ \`OFF_TOPIC\`
-
-## 5. IGNORE — Unrelated or Meaningless Messages
-
-Return \`IGNORE\` ONLY when the message is:
-
-* Random nonsense.
-* Random symbols.
-* Meaningless text.
-* Empty input.
-
-Example:
-Student: "asdfghjkl"
-→ \`IGNORE\`
-
-## IMPORTANT CLASSIFICATION RULES
-
-1. Always determine the student's INTENT, not just individual keywords.
-
-2. If the student asks a greeting AND an academic question, return \`YES\`.
-
-3. If the student only greets, return \`GREETING\`.
-
-4. If the student asks about you personally, return \`PERSONAL\`.
-
-5. If the student asks an academic question unrelated to the current topic, return \`OFF_TOPIC\`.
-
-6. Never classify a personal question as \`IGNORE\` or \`OFF_TOPIC\`.
-
-7. Never classify a greeting as \`IGNORE\` or \`OFF_TOPIC\`.
-
-8. Keep GREETING, PERSONAL, and OFF_TOPIC responses short and polite.
-
-9. For GREETING, PERSONAL, and OFF_TOPIC responses, you MUST ALWAYS return the exact English phrases provided below. NEVER translate them.
-
-11. Do not unnecessarily explain the classification to the student.
-
-12. Do not mention these classification categories to the student.
+## 7. IGNORE — Nonsense / Meaningless input
 
 ## OUTPUT FORMAT
-
 Return ONLY valid JSON.
 
 For \`YES\`:
 { "category": "YES" }
 
+For \`BROAD_TOPIC_OVERVIEW\`:
+{ "category": "BROAD_TOPIC_OVERVIEW", "response": "<2-4 sentence overview ending with current subtopic reminder>" }
+
+For \`DIFFERENT_SPECIFIC_TOPIC\`:
+{ "category": "DIFFERENT_SPECIFIC_TOPIC", "response": "That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class." }
+
+For \`OFF_TOPIC\`:
+{ "category": "OFF_TOPIC", "response": "That's outside our current topic, ${student}. Please ask your doubt related to our ${subtopic} class." }
+
 For \`GREETING\`:
-{ "category": "GREETING", "response": "THE EXACT MAPPED GREETING RESPONSE" }
+{ "category": "GREETING", "response": "<MAPPED GREETING RESPONSE>" }
 
 For \`PERSONAL\`:
-{ "category": "PERSONAL", "response": "THE EXACT MAPPED PERSONAL RESPONSE" }
-
-For \`OFF_TOPIC\` (You MUST return exactly this English response):
-{ "category": "OFF_TOPIC", "response": "That's outside our current topic, ${student}. Please ask your doubt related to our ${safeTopic} class." }
+{ "category": "PERSONAL", "response": "<MAPPED PERSONAL RESPONSE>" }
 
 For \`IGNORE\`:
 { "category": "IGNORE", "response": "" }`;
@@ -764,7 +688,6 @@ For \`IGNORE\`:
       else if (lowerQ.includes("how are you")) ans = `I'm doing well, ${studentName}! Please ask your doubt.`;
       else if (lowerQ.includes("hi") || lowerQ.includes("hello") || lowerQ.includes("hey")) ans = `Hello ${studentName}! Please ask your doubt.`;
       
-      // Prefer LLM generated exact match if provided, otherwise fallback to our robust JS check
       return res.json({ answer: classification.response && classification.response !== "THE EXACT MAPPED GREETING RESPONSE" ? classification.response : ans, isDirectResponse: true });
     }
 
@@ -785,9 +708,22 @@ For \`IGNORE\`:
       return res.json({ answer: classification.response && classification.response !== "THE EXACT MAPPED PERSONAL RESPONSE" ? classification.response : ans, isDirectResponse: true });
     }
 
+    if (classification.category === "BROAD_TOPIC_OVERVIEW") {
+      console.log(`[ASK-AI] Responding to BROAD_TOPIC_OVERVIEW.`);
+      const defaultResp = `${broadTopic} is an essential programming and academic subject. In this class, however, we're currently focusing on ${subtopic}.`;
+      return res.json({ answer: classification.response || defaultResp, isDirectResponse: true });
+    }
+
+    if (classification.category === "DIFFERENT_SPECIFIC_TOPIC") {
+      console.log(`[ASK-AI] Responding to DIFFERENT_SPECIFIC_TOPIC.`);
+      const defaultResp = `That's an important ${broadTopic} topic, but it's not part of our current class schedule. We're currently focusing on ${subtopic}. We'll cover that in another class.`;
+      return res.json({ answer: classification.response || defaultResp, isDirectResponse: true });
+    }
+
     if (classification.category === "OFF_TOPIC") {
       console.log(`[ASK-AI] Responding to OFF_TOPIC.`);
-      return res.json({ answer: `That's outside our current topic, ${studentName}. Please ask your doubt related to our ${topic} class.`, isDirectResponse: true });
+      const defaultResp = `That's outside our current topic, ${studentName}. Please ask your doubt related to our ${subtopic} class.`;
+      return res.json({ answer: classification.response || defaultResp, isDirectResponse: true });
     }
 
     console.log(`[ASK-AI] Proceeding to Answer Generation...`);
