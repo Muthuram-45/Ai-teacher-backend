@@ -36,7 +36,7 @@ let ttsOptions = {};
 const ttsClient = new textToSpeech.TextToSpeechClient(ttsOptions);
 
 const app = express();
-const port = parseInt(process.env.PORT, 10) || 8080;
+const port = parseInt(process.env.PORT, 10) || 8081;
 
 let activeVoice = "Female"; // Default voice
 global.activeVoice = activeVoice;
@@ -875,14 +875,14 @@ Return ONLY a valid JSON array in this exact format, with no additional text:
 The correctAnswer should be the index (0-3) of the correct option.`;
 
     const completion = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
           systemInstruction: "You are a quiz generator and translator. Return only valid JSON arrays with no additional text or formatting.",
       }
     });
 
-    logTokenUsage("gemini-3.5-flash", completion.usageMetadata);
+    logTokenUsage("gemini-2.5-flash", completion.usageMetadata);
 
     let quizQuestions;
     try {
