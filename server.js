@@ -1239,11 +1239,21 @@ app.get("/room-status/:roomName", (req, res) => {
 // 🌟 Encourage Student
 app.post("/encourage-student", async (req, res) => {
   try {
-    const { name, question } = req.body;
+    const { name, question, preferredLanguage } = req.body;
 
     if (!name || !question) {
       return res.status(400).json({ error: "Name and question are required" });
     }
+
+    const langNames = {
+      ta: "Tamil",
+      te: "Telugu",
+      hi: "Hindi",
+      kn: "Kannada",
+      ml: "Malayalam",
+      en: "English",
+    };
+    const targetLangName = langNames[preferredLanguage] || "English";
 
     // 1. Validate if the input should be ignored
     const validationPrompt = `Determine if the following student input is an academic question or doubt, or if it should be ignored.
@@ -1275,20 +1285,20 @@ OUTPUT NOTHING ELSE. Choose exactly ONE of these two words: IGNORE or PROCEED.`;
     }
 
     const prompt = `You are an encouraging Indian Teacher's Assistant. A student named "${name}" just asked this academic doubt: "${question}".
-    Provide a very short, one-sentence encouraging response.
-    Examples: "That is a very good curiosity, ${name}!", "Great doubt, ${name}, let's clear it together.", "Interesting point, ${name} - keep it up!"
+    Provide a very short, one-sentence encouraging response in ${targetLangName} language.
+    Examples in English: "That is a very good curiosity, ${name}!", "Great doubt, ${name}, let's clear it together.", "Interesting point, ${name} - keep it up!"
     
     RULES:
     1. Keep it under 15 words.
-    2. Be polite and use the student's name.
-    3. Use "doubt" instead of "question" where appropriate.
+    2. Be polite and use the student's name (${name}).
+    3. Output the response directly in ${targetLangName} language.
     4. Return ONLY the encouraging statement.`;
 
     const completion = await client.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You are an Indian Teacher Assistant providing short, polite, and encouraging feedback.",
+        systemInstruction: `You are an Indian Teacher Assistant providing short, polite, and encouraging feedback in ${targetLangName}.`,
         temperature: 0.8,
       }
     });

@@ -101,4 +101,66 @@ router.post('/prepare-package', async (req, res) => {
   }
 });
 
+// Endpoint for hand-raise audio localized per student receiver
+router.post('/hand-raise-audio', async (req, res) => {
+  const { roomName, studentName, lang } = req.body;
+  const targetLang = lang || 'en';
+  const name = studentName || 'Student';
+
+  console.log(`[HAND RAISE AUDIO REQUEST] Receiver Lang: ${targetLang}, Hand-Raiser: ${name}, Room: ${roomName || 'default'}`);
+
+  const baseMessage = `${name}, did you have any doubt? If yes, click the Ask Doubt button and ask your doubt.`;
+
+  const staticPrompts = {
+    'ta': `${name}, உங்களுக்கு ஏதாவது doubt இருக்கா? அப்படி இருந்தா Ask Doubt button click பண்ணி உங்க doubt கேளுங்க.`,
+    'ml': `${name}, നിങ്ങൾക്ക് എന്തെങ്കിലും doubt ഉണ്ടോ? ഉണ്ടെങ്കിൽ Ask Doubt button ക്ലിക്ക് ചെയ്ത് നിങ്ങളുടെ doubt ചോദിക്കുക.`,
+    'hi': `${name}, क्या आपका कोई doubt है? अगर है तो Ask Doubt button पर click करके अपना doubt पूछें.`,
+    'te': `${name}, మీకు ఏదైనా doubt ఉందా? ఉంటే Ask Doubt button పై click చేసి మీ doubt అడగండి.`,
+    'kn': `${name}, ನಿಮಗೆ ಯಾವುದಾದರೂ doubt ಇದೆಯಾ? ಇದ್ದರೆ Ask Doubt button ಕ್ಲಿಕ್ ಮಾಡಿ ನಿಮ್ಮ doubt ಕೇಳಿ.`,
+    'en': `${name}, do you have any doubt? If so, click the Ask Doubt button and ask your doubt.`
+  };
+
+  try {
+    let translatedText = staticPrompts[targetLang];
+    if (!translatedText) {
+      try {
+        translatedText = await TranslationService.translate(baseMessage, targetLang);
+      } catch (err) {
+        console.warn(`⚠️ [HAND RAISE AUDIO] Translation error for ${targetLang}, falling back to English prompt`);
+        translatedText = staticPrompts['en'];
+      }
+    }
+
+    const ttsBuffer = await TTSService.synthesize(translatedText, targetLang);
+    res.set("Content-Type", "audio/mpeg");
+    res.set("Access-Control-Allow-Origin", "*");
+    return res.send(ttsBuffer);
+  } catch (error) {
+    console.error(`❌ [HAND RAISE AUDIO ERROR] Failed for lang ${targetLang}:`, error);
+    try {
+      const fallbackText = staticPrompts['en'];
+      const ttsBuffer = await TTSService.synthesize(fallbackText, 'en');
+      res.set("Content-Type", "audio/mpeg");
+      res.set("Access-Control-Allow-Origin", "*");
+      return res.send(ttsBuffer);
+    } catch (fbErr) {
+      res.status(500).json({ error: "Failed to generate hand raise audio" });
+    }
+  }
+});
+
+router.post('/hand-raise-package', async (req, res) => {
+  const { roomName, studentName } = req.body;
+  try {
+    const pkg = await multilingualOrchestrator.prepareHandRaisePackage(
+      roomName || "default-room",
+      studentName || "Student"
+    );
+    res.json(pkg);
+  } catch (error) {
+    console.error("Hand Raise Package Error:", error);
+    res.status(500).json({ error: "Failed to generate hand raise package" });
+  }
+});
+
 module.exports = router;
