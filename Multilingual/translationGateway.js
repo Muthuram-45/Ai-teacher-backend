@@ -2,22 +2,86 @@ const express = require('express');
 const multer = require('multer');
 const { STTService, TranslationService, TTSService } = require('./services');
 const languageRouter = require('./languageRouter');
+const { selectTeacherLanguage, normalizeLanguage } = require('./teacherLanguageSelector');
+const multilingualOrchestrator = require('./multilingualOrchestrator');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Endpoint to translate lesson or speech text to chosen language
+router.post('/translate-text', async (req, res) => {
+  try {
+    const { text, targetLanguage } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    const normLang = normalizeLanguage(targetLanguage) || targetLanguage || 'en';
+    const translatedText = await TranslationService.translate(text, normLang);
+    res.json({
+      success: true,
+      originalText: text,
+      targetLanguage: normLang,
+      translatedText
+    });
+  } catch (error) {
+    console.error("Translate text error:", error);
+    res.status(500).json({ error: "Translation failed: " + error.message });
+  }
+});
+
+// Endpoint to inspect or select teacher audio language for a room
+router.get('/teacher-language/:roomName', (req, res) => {
+  const { roomName } = req.params;
+  const summary = languageRouter.getRoomSummary(roomName);
+  res.json({
+    success: true,
+    roomName,
+    teacherAudioLanguage: summary.teacherAudioLanguage,
+    activeLanguages: summary.activeLanguages,
+    languageCounts: summary.languageCounts,
+    studentCount: summary.studentCount,
+    details: summary.teacherLanguageDetails
+  });
+});
+
+// Standalone endpoint to evaluate language selection rules
+router.post('/select-teacher-language', (req, res) => {
+  const { studentLanguages, roomName, options } = req.body;
+  if (roomName) {
+    const details = languageRouter.getTeacherAudioLanguage(roomName, options);
+    return res.json({
+      success: !details.error,
+      roomName,
+      ...details
+    });
+  }
+
+  const details = selectTeacherLanguage(studentLanguages || [], options);
+  res.json({
+    success: !details.error,
+    ...details
+  });
+});
+
+// Endpoint for room diagnostics
+router.get('/room-summary/:roomName', (req, res) => {
+  const { roomName } = req.params;
+  const summary = languageRouter.getRoomSummary(roomName);
+  res.json({ success: true, ...summary });
+});
 
 // Track which languages are active for which rooms
 router.post('/process-chunk', upload.single('audio'), async (req, res) => {
   try {
     const { roomName } = req.body;
     const audioBuffer = req.file?.buffer;
-    
+
     if (!audioBuffer) {
       return res.status(400).json({ error: "No audio chunk provided" });
     }
 
     const activeLanguages = languageRouter.getActiveLanguages(roomName) || [];
-    
+
     // If no active students need translation, don't do anything to save costs
     if (activeLanguages.length === 0) {
       return res.json({ transcript: "", translations: {}, audioUrls: {} });
@@ -32,14 +96,14 @@ router.post('/process-chunk', upload.single('audio'), async (req, res) => {
     }
 
     const translations = {};
-    const audioBuffers = {}; // We can send buffers back as base64, or store them and send URLs
+    const audioBuffers = {};
 
     // 2. Translate and 3. TTS for each active language
     await Promise.all(activeLanguages.map(async (lang) => {
       try {
         const translatedText = await TranslationService.translate(transcriptText, lang);
         translations[lang] = translatedText;
-        
+
         const audioBuf = await TTSService.synthesize(translatedText, lang);
         audioBuffers[lang] = audioBuf.toString('base64');
       } catch (err) {
@@ -65,18 +129,29 @@ router.post('/set-language', (req, res) => {
   if (!roomName || !studentId || !language) {
     return res.status(400).json({ error: "Missing required fields" });
   }
-  
+
   languageRouter.addStudent(roomName, studentId, language);
-  res.json({ success: true, activeLanguages: languageRouter.getActiveLanguages(roomName) });
+  const teacherDetails = languageRouter.getTeacherAudioLanguage(roomName);
+
+  res.json({
+    success: true,
+    activeLanguages: languageRouter.getActiveLanguages(roomName),
+    teacherAudioLanguage: teacherDetails.language,
+    teacherLanguageDetails: teacherDetails
+  });
 });
 
 router.post('/remove-student', (req, res) => {
   const { roomName, studentId } = req.body;
   languageRouter.removeStudent(roomName, studentId);
-  res.json({ success: true });
-});
+  const teacherDetails = languageRouter.getTeacherAudioLanguage(roomName);
 
-const multilingualOrchestrator = require('./multilingualOrchestrator');
+  res.json({
+    success: true,
+    activeLanguages: languageRouter.getActiveLanguages(roomName),
+    teacherAudioLanguage: teacherDetails.language
+  });
+});
 
 router.post('/prepare-package', async (req, res) => {
   const { roomName, answerId, canonicalAnswer, isDirectResponse, speakerName, questionText, bufferMs } = req.body;
@@ -104,10 +179,10 @@ router.post('/prepare-package', async (req, res) => {
 // Endpoint for hand-raise audio localized per student receiver
 router.post('/hand-raise-audio', async (req, res) => {
   const { roomName, studentName, lang } = req.body;
-  const targetLang = lang || 'en';
+  const normLang = normalizeLanguage(lang) || 'ta'; // Prefer Tamil if unspecified
   const name = studentName || 'Student';
 
-  console.log(`[HAND RAISE AUDIO REQUEST] Receiver Lang: ${targetLang}, Hand-Raiser: ${name}, Room: ${roomName || 'default'}`);
+  console.log(`[HAND RAISE AUDIO REQUEST] Receiver Lang: ${normLang}, Hand-Raiser: ${name}, Room: ${roomName || 'default'}`);
 
   const baseMessage = `${name}, did you have any doubt? If yes, click the Ask Doubt button and ask your doubt.`;
 
@@ -121,31 +196,23 @@ router.post('/hand-raise-audio', async (req, res) => {
   };
 
   try {
-    let translatedText = staticPrompts[targetLang];
+    let translatedText = staticPrompts[normLang];
     if (!translatedText) {
       try {
-        translatedText = await TranslationService.translate(baseMessage, targetLang);
+        translatedText = await TranslationService.translate(baseMessage, normLang);
       } catch (err) {
-        console.warn(`⚠️ [HAND RAISE AUDIO] Translation error for ${targetLang}, falling back to English prompt`);
-        translatedText = staticPrompts['en'];
+        console.warn(`⚠️ [HAND RAISE AUDIO] Translation error for ${normLang}`);
+        translatedText = staticPrompts['ta'] || baseMessage;
       }
     }
 
-    const ttsBuffer = await TTSService.synthesize(translatedText, targetLang);
+    const ttsBuffer = await TTSService.synthesize(translatedText, normLang);
     res.set("Content-Type", "audio/mpeg");
     res.set("Access-Control-Allow-Origin", "*");
     return res.send(ttsBuffer);
   } catch (error) {
-    console.error(`❌ [HAND RAISE AUDIO ERROR] Failed for lang ${targetLang}:`, error);
-    try {
-      const fallbackText = staticPrompts['en'];
-      const ttsBuffer = await TTSService.synthesize(fallbackText, 'en');
-      res.set("Content-Type", "audio/mpeg");
-      res.set("Access-Control-Allow-Origin", "*");
-      return res.send(ttsBuffer);
-    } catch (fbErr) {
-      res.status(500).json({ error: "Failed to generate hand raise audio" });
-    }
+    console.error(`❌ [HAND RAISE AUDIO ERROR] Failed for lang ${normLang}:`, error);
+    res.status(500).json({ error: "Failed to generate hand raise audio" });
   }
 });
 

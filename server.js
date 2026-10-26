@@ -3,7 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
 const { GoogleGenAI } = require("@google/genai");
-const textToSpeech = require('@google-cloud/text-to-speech');
 const { logTokenUsage } = require("./utils/tokenLogger");
 const fs = require("fs");
 const path = require("path");
@@ -32,14 +31,14 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.GOOGLE_APPLICATION
   }
 }
 
-let ttsOptions = {};
-const ttsClient = new textToSpeech.TextToSpeechClient(ttsOptions);
-
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 8081;
 
-let activeVoice = "Female"; // Default voice
+// Replicated Teacher Voice: Mohan (Gemini 3.8 Flash TTS)
+const MOHAN_VOICE_ID = "voice_74080a81-5951-4b5f-972b-72b4064d116a";
+let activeVoice = "Mohan";
 global.activeVoice = activeVoice;
+global.activeVoiceId = MOHAN_VOICE_ID;
 
 // CORS: Use FRONTEND_URL env var in production (comma-separated for multiple origins).
 // In production (NODE_ENV=production), FRONTEND_URL is strictly required.
@@ -88,73 +87,76 @@ app.use("/api/analytics", analyticsRoutes);
 const multilingualRoutes = require("./Multilingual/translationGateway");
 app.use("/api/multilingual", multilingualRoutes);
 
+// Import and use voice replication routes (Gemini 3.8 Flash TTS)
+const voiceReplicationRoutes = require("./Route/voiceReplicationRoutes");
+app.use("/api/voice-replication", voiceReplicationRoutes);
+app.use("/api", voiceReplicationRoutes);
+
+// Serve generated replicated audio files
+const GENERATED_AUDIO_DIR = path.join(__dirname, "public", "generated");
+if (!fs.existsSync(GENERATED_AUDIO_DIR)) {
+  fs.mkdirSync(GENERATED_AUDIO_DIR, { recursive: true });
+}
+app.use("/generated", express.static(GENERATED_AUDIO_DIR));
+app.use(express.static(path.join(__dirname, "public")));
+
 const { sanitizeTextForTTS } = require("./Multilingual/ttsSanitizer");
 
-// 🔊 TTS Endpoint using Google Cloud TTS
+// 🔊 TTS Endpoint using Gemini 3.8 Flash TTS with Mohan's voice
 app.post("/api/tts", async (req, res) => {
   const rawText = req.body.text;
-  const lang = req.body.lang || 'en';
+  const roomName = req.body.roomName;
+  const role = req.body.role;
+  let requestedLang = req.body.lang;
+
   if (!rawText) return res.status(400).send("Text is required");
 
-  const text = sanitizeTextForTTS(rawText, lang);
+  // If role is teacher or language is 'auto'/unspecified with a room, resolve from room students
+  const languageRouter = require("./Multilingual/languageRouter");
+  const { normalizeLanguage } = require("./Multilingual/teacherLanguageSelector");
+
+  let targetLang = requestedLang ? normalizeLanguage(requestedLang) : null;
+
+  if ((!targetLang || requestedLang === "auto" || role === "teacher") && roomName) {
+    const teacherSelection = languageRouter.getTeacherAudioLanguage(roomName);
+    if (teacherSelection.language) {
+      targetLang = teacherSelection.language;
+    }
+  }
+
+  // If still undetermined, check if text has native script
+  if (!targetLang) {
+    if (/[\u0B80-\u0BFF]/.test(rawText)) targetLang = "ta";
+    else if (/[\u0D00-\u0D7F]/.test(rawText)) targetLang = "ml";
+    else if (/[\u0900-\u097F]/.test(rawText)) targetLang = "hi";
+    else if (/[\u0C00-\u0C7F]/.test(rawText)) targetLang = "te";
+    else if (/[\u0C80-\u0CFF]/.test(rawText)) targetLang = "kn";
+    else targetLang = process.env.DEFAULT_SESSION_LANGUAGE || "ta"; // Default to Tamil rather than English if ambiguous
+  }
+
+  const text = sanitizeTextForTTS(rawText, targetLang);
 
   try {
-    const localeMap = {
-      'en': 'en-IN',
-      'hi': 'hi-IN',
-      'ml': 'ml-IN',
-      'ta': 'ta-IN',
-      'te': 'te-IN',
-      'kn': 'kn-IN',
-      'en-IN': 'en-IN'
-    };
-    const locale = localeMap[lang] || lang;
-    const isMale = activeVoice === "Male";
-    const genderSuffix = isMale ? "B" : "A"; // Wavenet-B is Male, Wavenet-A is Female in most IN locales
-    
-    // Wavenet voices might not exist for some regional languages, fallback to Standard
-    let voiceName = `${locale}-Wavenet-${genderSuffix}`;
-    if (locale === 'te-IN' || locale === 'ml-IN' || locale === 'kn-IN' || locale === 'ta-IN') {
-      voiceName = `${locale}-Standard-${genderSuffix}`;
-    }
-
-    // Construct request
-    const request = {
-      input: { text: text },
-      // Select the language and SSML voice gender
-      voice: { languageCode: locale, name: voiceName },
-      // select the type of audio encoding
-      audioConfig: { audioEncoding: 'MP3' },
-    };
-
-    // Performs the text-to-speech request
-    const [response] = await ttsClient.synthesizeSpeech(request);
-    
-    console.log(`✅ [TTS] Successfully synthesized: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
+    console.log(`🎙️ [TTS] Synthesizing speech with Mohan's voice (${MOHAN_VOICE_ID}) via Gemini 3.8 Flash TTS | Lang: ${targetLang} | Room: ${roomName || "none"}`);
+    const { generateGeminiSpeechMp3 } = require("./Route/voiceReplicationRoutes");
+    const result = await generateGeminiSpeechMp3({
+      text,
+      voiceId: MOHAN_VOICE_ID,
+      language: targetLang,
+      roomName,
+      deliveryStyle: req.body.deliveryStyle || "teacher",
+      emotion: req.body.emotion || "confident",
+      intensity: req.body.intensity || "medium"
+    });
 
     res.set("Content-Type", "audio/mpeg");
-    res.set("Access-Control-Allow-Origin", "*"); // explicitly allow for recording mix
-    res.send(response.audioContent);
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("X-Audio-Language", targetLang);
+    res.set("X-Audio-Cached", String(result.cached || false));
+    return res.send(result.mp3Buffer);
   } catch (err) {
-    console.warn("⚠️ Google Cloud TTS unavailable (using free fallback TTS):", err.message);
-    try {
-      const locale = (lang || 'en').split('-')[0];
-      const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text.substring(0, 200))}&tl=${locale}&client=tw-ob`;
-      const ttsRes = await fetch(fallbackUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-        }
-      });
-      if (ttsRes.ok) {
-        const audioBuffer = await ttsRes.arrayBuffer();
-        res.set("Content-Type", "audio/mpeg");
-        res.set("Access-Control-Allow-Origin", "*");
-        return res.send(Buffer.from(audioBuffer));
-      }
-    } catch (fallbackErr) {
-      console.error("❌ Fallback TTS error:", fallbackErr.message);
-    }
-    res.status(503).json({ error: "TTS service unavailable", fallback: true });
+    console.error("❌ Gemini 3.8 Flash TTS Error:", err.message);
+    res.status(500).json({ error: "TTS generation failed: " + err.message });
   }
 });
 
@@ -187,28 +189,32 @@ const studentActivitiesData = {}; // { roomName: { studentName: { awayTime, inac
 // Path to voices directory
 const VOICES_DIR = path.join(__dirname, "..", "Ai-teacher-voicemodel", "voices");
 
-// Voice Management Endpoints
+// Voice Management Endpoints - Dedicated to Mohan's Replicated Voice
 app.get("/list-voices", (req, res) => {
-  try {
-    // Return available Google Cloud TTS voice genders (Wavenet is fixed)
-    res.json({ voices: ["Female", "Male"] });
-  } catch (e) {
-    console.error("❌ VOICES LIST ERROR:", e);
-    res.status(500).json({ error: "Failed to list voices" });
-  }
+  res.json({
+    voices: ["Mohan"],
+    activeVoice: "Mohan",
+    voiceId: MOHAN_VOICE_ID,
+    replicatedVoices: [
+      {
+        voiceId: MOHAN_VOICE_ID,
+        displayName: "Mohan",
+        model: "gemini-3.8-flash-tts"
+      }
+    ]
+  });
 });
 
 app.post("/select-voice", (req, res) => {
-  const { voice } = req.body;
-  if (!voice) return res.status(400).json({ error: "No voice name provided" });
-  activeVoice = voice;
-  global.activeVoice = voice;
-  console.log(`🎤 ACTIVE VOICE SET TO: ${voice}`);
-  res.json({ success: true, activeVoice });
+  activeVoice = "Mohan";
+  global.activeVoice = "Mohan";
+  global.activeVoiceId = MOHAN_VOICE_ID;
+  console.log(`🎤 ACTIVE VOICE SET TO: Mohan (${MOHAN_VOICE_ID}) via Gemini 3.8 Flash TTS`);
+  res.json({ success: true, activeVoice: "Mohan", voiceId: MOHAN_VOICE_ID });
 });
 
 app.get("/active-voice", (req, res) => {
-  res.json({ activeVoice });
+  res.json({ activeVoice: "Mohan", voiceId: MOHAN_VOICE_ID });
 });
 
 const getDeviceType = (userAgent) => {
@@ -1408,10 +1414,11 @@ app.post("/api/generate-video", async (req, res) => {
     console.log(`🎬 [VIDEO-GEN] Script generated successfully. Text length: ${scriptText.length}`);
     console.log(`🎬 [VIDEO-GEN] Step 2: Generating video with languages=${languages?.join(',')}, voiceId=${voiceId}`);
     
-    // Map Frontend "Male" / "Female" to Videogenerator expected values
-    let mappedVoiceId = voiceId;
-    if (voiceId === "Male") mappedVoiceId = "google-cloud-tts-male";
-    if (voiceId === "Female") mappedVoiceId = "google-cloud-tts-female";
+    // Ensure Mohan's replicated voice ID is used for speech generation
+    let mappedVoiceId = MOHAN_VOICE_ID;
+    if (voiceId && voiceId.startsWith("voice_")) {
+      mappedVoiceId = voiceId;
+    }
 
     const FormData = require('form-data');
 
@@ -1543,16 +1550,14 @@ app.get("/api/generate-video/status/:jobId", async (req, res) => {
   }
 });
 
-// Proxy: Get available voices from VideoGenerator
-app.get("/api/video-voices", async (req, res) => {
-  try {
-    const response = await fetch(`${VIDEOGEN_API}/api/voice/list`);
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    console.error("❌ [VIDEO-VOICES] Proxy error:", err);
-    res.status(500).json({ error: "Failed to fetch video voices", voices: [] });
-  }
+// Get available voices - Exclusively Mohan's replicated voice
+app.get("/api/video-voices", (req, res) => {
+  res.json({
+    success: true,
+    voices: [
+      { id: MOHAN_VOICE_ID, name: "Mohan", model: "gemini-3.8-flash-tts" }
+    ]
+  });
 });
 
 // ⚠️ Centralized Express error handler — prevents unhandled errors from crashing the container.

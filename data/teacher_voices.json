@@ -1,0 +1,12 @@
+[
+  {
+    "voiceId": "voice_74080a81-5951-4b5f-972b-72b4064d116a",
+    "displayName": "Mohan",
+    "teacherEmail": "default_teacher",
+    "description": "Mohan Replicated Voice via Gemini 3.8 Flash TTS",
+    "sampleRate": 24000,
+    "model": "gemini-3.8-flash-tts",
+    "createdAt": "2026-10-23T15:47:21.575Z",
+    "updatedAt": "2026-10-23T15:47:21.576Z"
+  }
+]

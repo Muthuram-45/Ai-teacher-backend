@@ -1,6 +1,5 @@
 
 const { GoogleGenAI } = require("@google/genai");
-const textToSpeech = require('@google-cloud/text-to-speech');
 const { logTokenUsage } = require("../utils/tokenLogger");
 
 const useVertexAI = process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true';
@@ -11,7 +10,7 @@ const client = new GoogleGenAI(useVertexAI ? {
 } : {
   apiKey: process.env.GEMINI_API_KEY,
 });
-const ttsClient = new textToSpeech.TextToSpeechClient();
+
 
 class STTService {
   /**
@@ -167,33 +166,18 @@ Answer: "Array എന്നാൽ, multiple values ഒരു single variable-ൽ
 class TTSService {
   static async synthesize(text, languageCode) {
     try {
-      const localeMap = {
-        'en': 'en-IN',
-        'hi': 'hi-IN',
-        'ml': 'ml-IN',
-        'ta': 'ta-IN',
-        'te': 'te-IN',
-        'kn': 'kn-IN',
-        'en-IN': 'en-IN'
-      };
-      const locale = localeMap[languageCode] || languageCode;
-      
-      // Read the activeVoice global if available, default to Female/A
-      let genderSuffix = 'A';
-      if (global.activeVoice === "Male") {
-          genderSuffix = 'B';
-      }
-      
-      const request = {
-        input: { text: text },
-        voice: { languageCode: locale, name: `${locale}-Wavenet-${genderSuffix}` }, 
-        audioConfig: { audioEncoding: 'MP3' },
-      };
-
-      const [response] = await ttsClient.synthesizeSpeech(request);
-      return response.audioContent;
+      const { generateGeminiSpeechMp3, MOHAN_VOICE_ID } = require("../Route/voiceReplicationRoutes");
+      const result = await generateGeminiSpeechMp3({
+        text,
+        voiceId: MOHAN_VOICE_ID,
+        language: languageCode || 'english',
+        deliveryStyle: 'teacher',
+        emotion: 'confident',
+        intensity: 'medium'
+      });
+      return result.mp3Buffer;
     } catch (error) {
-      console.error("TTS Error:", error);
+      console.error("Gemini 3.8 Flash TTS Error in Multilingual:", error);
       throw error;
     }
   }
