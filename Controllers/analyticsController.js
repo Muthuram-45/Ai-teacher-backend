@@ -1,5 +1,4 @@
 const db = require('../utils/db');
-const xlsx = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const { GoogleGenAI } = require("@google/genai");
 
@@ -54,51 +53,6 @@ const normalizeCourse = (course) => {
   return c.replace(/\b\w/g, l => l.toUpperCase());
 };
 
-const extractMetadataFromFilename = (filename) => {
-  let type = 'unknown';
-  const lowerName = filename.toLowerCase();
-  if (lowerName.includes('class_report')) type = 'class';
-  else if (lowerName.includes('quiz_report')) type = 'quiz';
-  else if (lowerName.includes('activity_report')) type = 'activity';
-  return type;
-};
-
-const extractMetadataFromContent = (data, type) => {
-  let date = null;
-  let topic = null;
-  let subTopic = null;
-  
-  for (let i = 0; i < Math.min(15, data.length); i++) {
-    const row = data[i];
-    if (!row || !Array.isArray(row)) continue;
-    
-    const cell0 = row[0] ? String(row[0]).trim().toLowerCase() : '';
-    const cell1 = row[1] ? String(row[1]).trim() : '';
-    
-    if (cell0.includes('date')) {
-      if (cell1) {
-        date = normalizeDate(cell1);
-      } else {
-        const match = cell0.match(/date[\s:]*([\d-]+)/);
-        if (match) date = normalizeDate(match[1]);
-      }
-    }
-
-    if (cell0 === 'topic:' || cell0 === 'topic') {
-      if (cell1) topic = normalizeTopic(cell1);
-    }
-    
-    if (cell0 === 'sub topic:' || cell0 === 'sub topic' || cell0 === 'subtopic:') {
-      if (cell1) subTopic = normalizeTopic(cell1);
-    }
-  }
-
-  if (!topic) topic = 'General';
-  if (!subTopic) subTopic = 'General';
-
-  return { date, topic, subTopic };
-};
-
 const calculateEngagement = (session) => {
   if (session.attendance_duration === null && session.questions_asked === null && session.quiz_completed === null) return null;
   // Start with a base of 50.
@@ -127,252 +81,6 @@ const calculateAttention = (session) => {
   if (session.warnings) score -= session.warnings * 5;
   if (session.tab_switches) score -= session.tab_switches * 2;
   return Math.max(0, Math.min(100, score));
-};
-
-exports.uploadReports = async (req, res) => {
-  try {
-    const files = req.files;
-    if (!files || files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
-
-    const sessions = {};
-    const validationSummary = {
-      detectedReports: [],
-      matchedStudents: 0
-    };
-
-    let commonDate = null;
-    let commonTopic = null;
-    let commonSubTopic = null;
-    const parsedFiles = [];
-
-    for (const file of files) {
-      const type = extractMetadataFromFilename(file.originalname);
-      const workbook = xlsx.readFile(file.path);
-      const sheetName = workbook.SheetNames[0];
-      const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-      
-      const { date, topic, subTopic } = extractMetadataFromContent(data, type);
-      if (date && !commonDate) commonDate = date;
-      if (topic && topic !== 'General' && !commonTopic) commonTopic = topic;
-      if (subTopic && subTopic !== 'General' && !commonSubTopic) commonSubTopic = subTopic;
-      
-      parsedFiles.push({ file, type, data });
-    }
-
-    const sessionDate = commonDate || normalizeDate(new Date().toISOString());
-    const sessionTopic = commonTopic || 'Unknown Topic';
-    const sessionSubTopic = commonSubTopic || 'General';
-
-    validationSummary.newSessionCreated = {
-      date: sessionDate,
-      topic: sessionTopic,
-      subTopic: sessionSubTopic
-    };
-
-    console.log(`\n[ANALYTICS] Class identified: Topic = ${sessionTopic}, SubTopic = ${sessionSubTopic}, Date = ${sessionDate}`);
-
-    for (const { file, type, data } of parsedFiles) {
-      let studentsFound = 0;
-      console.log(`[ANALYTICS] File: ${file.originalname} | Type: ${type}`);
-
-      if (type === 'class') {
-        let inStudentSection = false;
-        let colMap = {};
-        for (const row of data) {
-          if (!row || row.length === 0) continue;
-          
-          if (row[0] && row[0].toString().toUpperCase().includes('STUDENT DETAILS')) {
-            inStudentSection = true;
-            continue;
-          }
-          
-          if (inStudentSection) {
-            // Find headers
-            if (row.includes('Name') || row.includes('First Join')) {
-              row.forEach((col, idx) => { if (col) colMap[col.toString().trim()] = idx; });
-              continue;
-            }
-            // Data row
-            if (colMap['Name'] !== undefined && row[colMap['Name']]) {
-              const sName = row[colMap['Name']].toString().trim();
-              if (!sName || sName.toLowerCase() === 'unknown' || sName.includes('Question')) continue; // skip bad rows
-              
-              const norm = normalizeName(sName);
-              const studentId = norm.replace(/\s/g, ''); // Simple student_id based on name
-              const key = norm; // Uniqueness is purely student inside this batch
-              if (!sessions[key]) sessions[key] = { id: uuidv4(), student_id: studentId, student_name: sName, normalized_student_name: norm, date: sessionDate, topic: sessionTopic, sub_topic: sessionSubTopic };
-              
-              // Convert "25m 32s" to seconds
-              const stayStr = (row[colMap['Total Stay']] || '').toString();
-              let durationSecs = 0;
-              const minMatch = stayStr.match(/(\d+)m/);
-              const secMatch = stayStr.match(/(\d+)s/);
-              if (minMatch) durationSecs += parseInt(minMatch[1]) * 60;
-              if (secMatch) durationSecs += parseInt(secMatch[1]);
-              if (!minMatch && !secMatch && !isNaN(parseInt(stayStr))) durationSecs = parseInt(stayStr) * 60; // fallback
-
-              sessions[key].attendance_duration = (sessions[key].attendance_duration || 0) + durationSecs;
-              sessions[key].join_count = parseInt(row[colMap['Join Count']] || 1);
-              
-              // Extract Questions properly (count by common delimiters like ? or | or newline)
-              const rawQuestions = row[colMap['Question']] ? row[colMap['Question']].toString().trim() : '';
-              let qCount = 0;
-              let qText = '';
-              if (rawQuestions && rawQuestions.toLowerCase() !== 'no') {
-                 // Try to split by common dividers
-                 const splits = rawQuestions.split(/[?|;\n]+/).map(s => s.trim()).filter(s => s.length > 0);
-                 qCount = splits.length || (rawQuestions.length > 5 ? 1 : 0);
-                 qText = rawQuestions;
-              }
-              
-              sessions[key].questions_asked = qCount;
-              sessions[key].question_text = qText;
-              sessions[key].source_class_report = file.originalname;
-              studentsFound++;
-            }
-          }
-        }
-        console.log(`[ANALYTICS] Extracted ${studentsFound} students from Class Report`);
-        validationSummary.detectedReports.push({ type: 'Class Report', file: file.originalname, date: sessionDate, topic: sessionTopic, students: studentsFound });
-      } 
-      else if (type === 'quiz') {
-        let inStudentSection = false;
-        let colMap = {};
-        for (const row of data) {
-          if (!row || row.length === 0) continue;
-          
-          if (row[0] && row[0].toString().toUpperCase().includes('STUDENT RESULTS')) {
-            inStudentSection = true;
-            continue;
-          }
-          if (row[0] && row[0].toString().toUpperCase().includes('QUIZ QUESTIONS')) {
-            inStudentSection = false; // end of students
-          }
-          
-          if (inStudentSection) {
-            if (row.includes('Student Name') || row.includes('Score (%)')) {
-              row.forEach((col, idx) => { if (col) colMap[col.toString().trim()] = idx; });
-              continue;
-            }
-            if (colMap['Student Name'] !== undefined && row[colMap['Student Name']]) {
-              const sName = row[colMap['Student Name']].toString().trim();
-              if (!sName || sName.toLowerCase() === 'unknown') continue;
-              
-              const norm = normalizeName(sName);
-              const studentId = norm.replace(/\s/g, '');
-              const key = norm;
-              if (!sessions[key]) sessions[key] = { id: uuidv4(), student_id: studentId, student_name: sName, normalized_student_name: norm, date: sessionDate, topic: sessionTopic, sub_topic: sessionSubTopic };
-              
-              const scoreRaw = row[colMap['Score (%)']];
-              sessions[key].quiz_score = scoreRaw ? parseFloat(scoreRaw.toString().replace('%','')) : null;
-              sessions[key].quiz_completed = true;
-              
-              const correctStr = row[colMap['Correct Answers']];
-              if (correctStr && correctStr.includes('/')) {
-                 sessions[key].correct_answers = parseInt(correctStr.split('/')[0]);
-                 sessions[key].total_questions = parseInt(correctStr.split('/')[1]);
-              }
-              sessions[key].tab_switches = parseInt(row[colMap['Tab Switches']] || 0);
-              sessions[key].violations = parseInt(row[colMap['Video Violations']] || 0);
-              sessions[key].source_quiz_report = file.originalname;
-              studentsFound++;
-            }
-          }
-        }
-        console.log(`[ANALYTICS] Extracted ${studentsFound} submissions from Quiz Report`);
-        validationSummary.detectedReports.push({ type: 'Quiz Report', file: file.originalname, date: sessionDate, topic: sessionTopic, students: studentsFound });
-      }
-      else if (type === 'activity') {
-        let inStudentSection = false;
-        let colMap = {};
-        for (const row of data) {
-          if (!row || row.length === 0) continue;
-          
-          if (row[0] && row[0].toString().toUpperCase().includes('ACTIVITY DETAILS')) {
-            inStudentSection = true;
-            continue;
-          }
-          
-          if (inStudentSection) {
-            if (row.includes('Student Name') || row.includes('Total Away Time (s)')) {
-              row.forEach((col, idx) => { if (col) colMap[col.toString().trim()] = idx; });
-              continue;
-            }
-            if (colMap['Student Name'] !== undefined && row[colMap['Student Name']]) {
-              const sName = row[colMap['Student Name']].toString().trim();
-              if (!sName || sName.toLowerCase() === 'unknown') continue;
-              
-              const norm = normalizeName(sName);
-              const studentId = norm.replace(/\s/g, '');
-              const key = norm;
-              if (!sessions[key]) sessions[key] = { id: uuidv4(), student_id: studentId, student_name: sName, normalized_student_name: norm, date: sessionDate, topic: sessionTopic, sub_topic: sessionSubTopic };
-              
-              sessions[key].away_time = parseInt(row[colMap['Total Away Time (s)']] || 0);
-              sessions[key].inactive_time = parseInt(row[colMap['Total Inactive Time (s)']] || 0);
-              sessions[key].background_time = parseInt(row[colMap['Total Background Time (s)']] || 0);
-              sessions[key].warnings = parseInt(row[colMap['Total Warnings']] || 0);
-              sessions[key].source_activity_report = file.originalname;
-              studentsFound++;
-            }
-          }
-        }
-        console.log(`[ANALYTICS] Extracted ${studentsFound} students from Activity Report`);
-        validationSummary.detectedReports.push({ type: 'Activity Report', file: file.originalname, date: sessionDate, topic: sessionTopic, students: studentsFound });
-      }
-    }
-
-    const sessionValues = Object.values(sessions);
-    validationSummary.matchedStudents = sessionValues.length;
-
-    // Save to DB
-    const connection = await db.getConnection();
-    let processedRecords = 0;
-    
-    for (const session of sessionValues) {
-      session.engagement_score = calculateEngagement(session);
-      session.attention_score = calculateAttention(session);
-      session.overall_score = session.quiz_score !== null ? session.quiz_score : null; // base MVP
-      
-      const sql = `
-        INSERT INTO analytics_sessions (
-          id, student_id, student_name, normalized_student_name, date, topic, sub_topic,
-          attendance_duration, join_count, quiz_score, correct_answers, total_questions, quiz_completed,
-          away_time, inactive_time, background_time, warnings, tab_switches, violations, questions_asked, question_text,
-          engagement_score, attention_score, overall_score, source_class_report, source_quiz_report, source_activity_report
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          attendance_duration = COALESCE(VALUES(attendance_duration), attendance_duration),
-          quiz_score = COALESCE(VALUES(quiz_score), quiz_score),
-          quiz_completed = COALESCE(VALUES(quiz_completed), quiz_completed),
-          correct_answers = COALESCE(VALUES(correct_answers), correct_answers),
-          questions_asked = COALESCE(VALUES(questions_asked), questions_asked),
-          question_text = COALESCE(VALUES(question_text), question_text),
-          away_time = COALESCE(VALUES(away_time), away_time),
-          inactive_time = COALESCE(VALUES(inactive_time), inactive_time),
-          engagement_score = VALUES(engagement_score),
-          attention_score = VALUES(attention_score),
-          overall_score = VALUES(overall_score),
-          source_class_report = COALESCE(VALUES(source_class_report), source_class_report),
-          source_quiz_report = COALESCE(VALUES(source_quiz_report), source_quiz_report),
-          source_activity_report = COALESCE(VALUES(source_activity_report), source_activity_report)
-      `;
-      
-      await connection.query(sql, [
-        session.id, session.student_id, session.student_name, session.normalized_student_name, session.date, session.topic, session.sub_topic,
-        session.attendance_duration ?? null, session.join_count ?? null, session.quiz_score ?? null, session.correct_answers ?? null, session.total_questions ?? null, session.quiz_completed ?? false,
-        session.away_time ?? null, session.inactive_time ?? null, session.background_time ?? null, session.warnings ?? null, session.tab_switches ?? null, session.violations ?? null, session.questions_asked ?? null, session.question_text || null,
-        session.engagement_score ?? null, session.attention_score ?? null, session.overall_score ?? null,
-        session.source_class_report || null, session.source_quiz_report || null, session.source_activity_report || null
-      ]);
-      processedRecords++;
-    }
-    connection.release();
-
-    res.status(200).json({ success: true, processedRecords, validationSummary });
-  } catch (error) {
-    console.error('Excel processing error:', error);
-    res.status(500).json({ error: error.message || 'Failed to process files' });
-  }
 };
 
 exports.getOverview = async (req, res) => {
@@ -779,5 +487,357 @@ exports.getRecentClasses = async (req, res) => {
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+};
+
+
+exports.getAdminMeetings = async (req, res) => {
+  try {
+    const sql = `
+      SELECT 
+        topic, 
+        COALESCE(sub_topic, 'General') AS sub_topic, 
+        DATE_FORMAT(date, '%Y-%m-%d') AS date,
+        COUNT(DISTINCT normalized_student_name) AS joined_students_count,
+        ROUND(AVG(attendance_duration), 0) AS avg_attendance_duration,
+        ROUND(AVG(quiz_score), 1) AS avg_quiz_score,
+        ROUND(AVG(engagement_score), 1) AS avg_engagement_score,
+        ROUND(AVG(attention_score), 1) AS avg_attention_score,
+        COALESCE(SUM(warnings), 0) AS total_warnings,
+        COALESCE(SUM(tab_switches), 0) AS total_tab_switches,
+        COALESCE(SUM(questions_asked), 0) AS total_questions_asked,
+        COUNT(CASE WHEN source_class_report IS NOT NULL THEN 1 END) AS has_class_report,
+        COUNT(CASE WHEN source_quiz_report IS NOT NULL THEN 1 END) AS has_quiz_report,
+        COUNT(CASE WHEN source_activity_report IS NOT NULL THEN 1 END) AS has_activity_report
+      FROM analytics_sessions
+      GROUP BY topic, COALESCE(sub_topic, 'General'), DATE_FORMAT(date, '%Y-%m-%d')
+      ORDER BY date DESC
+    `;
+    const [rows] = await db.query(sql);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.getMeetingConsolidated = async (req, res) => {
+  try {
+    const { topic, subTopic, date } = req.query;
+    if (!topic || !date) {
+      return res.status(400).json({ error: 'topic and date are required' });
+    }
+
+    // Clean date to YYYY-MM-DD
+    let cleanDate = date;
+    if (typeof date === 'string' && date.includes('T')) {
+      cleanDate = date.split('T')[0];
+    }
+
+    let sql = `
+      SELECT *, DATE_FORMAT(date, '%Y-%m-%d') AS formatted_date 
+      FROM analytics_sessions 
+      WHERE topic = ? 
+        AND (DATE_FORMAT(date, '%Y-%m-%d') = ? OR DATE(date) = ? OR date = ?)
+    `;
+    let params = [topic, cleanDate, cleanDate, cleanDate];
+
+    if (subTopic && subTopic !== 'All Topics' && subTopic !== 'All Sub Topics' && subTopic !== 'General') {
+      sql += ' AND (sub_topic = ? OR sub_topic IS NULL)';
+      params.push(subTopic);
+    }
+
+    sql += ' ORDER BY student_name ASC';
+    const [students] = await db.query(sql, params);
+
+    const totalStudents = students.length;
+    let totalScore = 0, scoreCount = 0;
+    let totalDuration = 0, durationCount = 0;
+    let totalEngagement = 0, engCount = 0;
+    let totalAttention = 0, attCount = 0;
+    let totalWarnings = 0, totalTabSwitches = 0, totalQuestions = 0;
+    let classReportCount = 0, quizReportCount = 0, activityReportCount = 0;
+
+    students.forEach(s => {
+      if (s.quiz_score !== null && s.quiz_score !== undefined) {
+        totalScore += parseFloat(s.quiz_score);
+        scoreCount++;
+      }
+      if (s.attendance_duration !== null && s.attendance_duration !== undefined) {
+        totalDuration += parseInt(s.attendance_duration);
+        durationCount++;
+      }
+      if (s.engagement_score !== null && s.engagement_score !== undefined) {
+        totalEngagement += parseFloat(s.engagement_score);
+        engCount++;
+      }
+      if (s.attention_score !== null && s.attention_score !== undefined) {
+        totalAttention += parseFloat(s.attention_score);
+        attCount++;
+      }
+      if (s.warnings) totalWarnings += parseInt(s.warnings);
+      if (s.tab_switches) totalTabSwitches += parseInt(s.tab_switches);
+      if (s.questions_asked) totalQuestions += parseInt(s.questions_asked);
+      if (s.source_class_report) classReportCount++;
+      if (s.source_quiz_report) quizReportCount++;
+      if (s.source_activity_report) activityReportCount++;
+    });
+
+    res.json({
+      meeting: {
+        topic,
+        subTopic: subTopic || (students[0] && students[0].sub_topic) || 'General',
+        date: cleanDate,
+        total_students_joined: totalStudents,
+        avg_quiz_score: scoreCount > 0 ? Math.round(totalScore / scoreCount) : null,
+        avg_attendance_duration: durationCount > 0 ? Math.round(totalDuration / durationCount) : null,
+        avg_engagement_score: engCount > 0 ? Math.round(totalEngagement / engCount) : null,
+        avg_attention_score: attCount > 0 ? Math.round(totalAttention / attCount) : null,
+        total_warnings: totalWarnings,
+        total_tab_switches: totalTabSwitches,
+        total_questions_asked: totalQuestions,
+        reports_attached: {
+          class_report: classReportCount > 0,
+          quiz_report: quizReportCount > 0,
+          activity_report: activityReportCount > 0
+        }
+      },
+      students
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+
+exports.saveLiveSessionAnalytics = async ({
+  roomName,
+  topic = 'General',
+  subTopic = 'General',
+  attendance = {},
+  doubts = [],
+  quizId = null,
+  quizzes = {},
+  studentActivitiesData = {}
+}) => {
+  try {
+    const cleanTopic = topic || 'General';
+    const cleanSubTopic = subTopic || 'General';
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find quiz for this room
+    let quiz = null;
+    if (quizId && quizzes[quizId]) {
+      quiz = quizzes[quizId];
+    } else if (quizzes) {
+      quiz = Object.values(quizzes).reverse().find(q => q.roomName === roomName || q.topic === cleanSubTopic || q.topic === cleanTopic) || null;
+    }
+
+    // Activity data for this room
+    const roomActivities = (studentActivitiesData && roomName && studentActivitiesData[roomName]) ? studentActivitiesData[roomName] : {};
+
+    // Collect all unique student names
+    const studentMap = {}; // normalized_name -> data
+
+    // 1. Process Attendance
+    if (attendance) {
+      Object.values(attendance).forEach(s => {
+        if (!s || !s.identity) return;
+        const role = (s.role || '').toLowerCase();
+        if (role === 'teacher') return;
+
+        const originalName = s.identity.trim();
+        const normName = originalName.toLowerCase();
+        if (normName === 'teacher') return;
+
+        let staySecs = 0;
+        if (s.totalStayTime) {
+          staySecs = Math.round(s.totalStayTime / 1000);
+        }
+        if (s.status === 'online' && s.lastJoined) {
+          staySecs += Math.round((Date.now() - s.lastJoined) / 1000);
+        }
+
+        studentMap[normName] = {
+          student_name: originalName,
+          normalized_student_name: normName,
+          attendance_duration: staySecs > 0 ? staySecs : 60,
+          join_count: s.joinCount || 1,
+          quiz_score: null,
+          correct_answers: null,
+          total_questions: null,
+          quiz_completed: false,
+          away_time: 0,
+          inactive_time: 0,
+          background_time: 0,
+          warnings: 0,
+          tab_switches: 0,
+          questions_asked: 0,
+          question_text: '',
+          has_attendance: true
+        };
+      });
+    }
+
+    // 2. Process Quiz Submissions
+    if (quiz && Array.isArray(quiz.submissions)) {
+      quiz.submissions.forEach(sub => {
+        if (!sub || !sub.studentName) return;
+        const originalName = sub.studentName.trim();
+        const normName = originalName.toLowerCase();
+        if (normName === 'teacher') return;
+
+        if (!studentMap[normName]) {
+          studentMap[normName] = {
+            student_name: originalName,
+            normalized_student_name: normName,
+            attendance_duration: null,
+            join_count: 1,
+            away_time: 0,
+            inactive_time: 0,
+            background_time: 0,
+            warnings: 0,
+            tab_switches: 0,
+            questions_asked: 0,
+            question_text: '',
+            has_attendance: false
+          };
+        }
+
+        studentMap[normName].quiz_score = typeof sub.score === 'number' ? sub.score : null;
+        studentMap[normName].correct_answers = sub.correctCount !== undefined ? sub.correctCount : null;
+        studentMap[normName].total_questions = sub.totalQuestions !== undefined ? sub.totalQuestions : (quiz.questions ? quiz.questions.length : null);
+        studentMap[normName].quiz_completed = true;
+        if (sub.browserSwitchCount) {
+          studentMap[normName].tab_switches = Math.max(studentMap[normName].tab_switches || 0, sub.browserSwitchCount);
+        }
+      });
+    }
+
+    // 3. Process Activity & Proctoring Data
+    if (roomActivities) {
+      Object.entries(roomActivities).forEach(([sName, act]) => {
+        if (!sName || !act) return;
+        const normName = sName.trim().toLowerCase();
+        if (normName === 'teacher') return;
+
+        if (!studentMap[normName]) {
+          studentMap[normName] = {
+            student_name: sName.trim(),
+            normalized_student_name: normName,
+            attendance_duration: null,
+            join_count: 1,
+            quiz_score: null,
+            correct_answers: null,
+            total_questions: null,
+            quiz_completed: false,
+            questions_asked: 0,
+            question_text: '',
+            has_attendance: false
+          };
+        }
+
+        studentMap[normName].away_time = Math.round(act.awayTime || 0);
+        studentMap[normName].inactive_time = Math.round(act.inactiveTime || 0);
+        studentMap[normName].background_time = Math.round(act.backgroundTime || 0);
+        studentMap[normName].warnings = act.warningCount || 0;
+      });
+    }
+
+    // 4. Process Doubts / Questions
+    if (Array.isArray(doubts)) {
+      doubts.forEach(d => {
+        if (!d || !d.name) return;
+        const normName = d.name.trim().toLowerCase();
+        if (studentMap[normName]) {
+          studentMap[normName].questions_asked = (studentMap[normName].questions_asked || 0) + 1;
+          const text = d.text || '';
+          studentMap[normName].question_text = studentMap[normName].question_text 
+            ? `${studentMap[normName].question_text}; ${text}`
+            : text;
+        }
+      });
+    }
+
+    const studentsToSave = Object.values(studentMap);
+    if (studentsToSave.length === 0) {
+      console.log(`[LIVE ANALYTICS] No student records to save for room: ${roomName}`);
+      return { success: true, count: 0 };
+    }
+
+    // 5. Calculate scores and save to MySQL
+    for (const session of studentsToSave) {
+      session.engagement_score = calculateEngagement(session);
+      session.attention_score = calculateAttention(session);
+      session.overall_score = session.quiz_score !== null ? session.quiz_score : null;
+
+      const recordId = uuidv4();
+      const studentId = session.normalized_student_name.replace(/\s+/g, '');
+
+      const sql = `
+        INSERT INTO analytics_sessions (
+          id, student_id, student_name, normalized_student_name, date, topic, sub_topic,
+          attendance_duration, join_count, quiz_score, correct_answers, total_questions, quiz_completed,
+          away_time, inactive_time, background_time, warnings, tab_switches, violations,
+          questions_asked, question_text, engagement_score, attention_score, overall_score,
+          source_class_report, source_quiz_report, source_activity_report
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          attendance_duration = COALESCE(VALUES(attendance_duration), attendance_duration),
+          join_count = COALESCE(VALUES(join_count), join_count),
+          quiz_score = COALESCE(VALUES(quiz_score), quiz_score),
+          correct_answers = COALESCE(VALUES(correct_answers), correct_answers),
+          total_questions = COALESCE(VALUES(total_questions), total_questions),
+          quiz_completed = COALESCE(VALUES(quiz_completed), quiz_completed),
+          away_time = COALESCE(VALUES(away_time), away_time),
+          inactive_time = COALESCE(VALUES(inactive_time), inactive_time),
+          background_time = COALESCE(VALUES(background_time), background_time),
+          warnings = COALESCE(VALUES(warnings), warnings),
+          tab_switches = COALESCE(VALUES(tab_switches), tab_switches),
+          questions_asked = COALESCE(VALUES(questions_asked), questions_asked),
+          question_text = COALESCE(VALUES(question_text), question_text),
+          engagement_score = VALUES(engagement_score),
+          attention_score = VALUES(attention_score),
+          overall_score = VALUES(overall_score),
+          source_class_report = 'Live Meeting',
+          source_quiz_report = CASE WHEN VALUES(quiz_completed) = 1 THEN 'Live Quiz' ELSE source_quiz_report END,
+          source_activity_report = 'Live Activity Monitor'
+      `;
+
+      await db.query(sql, [
+        recordId,
+        studentId,
+        session.student_name,
+        session.normalized_student_name,
+        today,
+        cleanTopic,
+        cleanSubTopic,
+        session.attendance_duration ?? null,
+        session.join_count ?? 1,
+        session.quiz_score ?? null,
+        session.correct_answers ?? null,
+        session.total_questions ?? null,
+        session.quiz_completed ?? false,
+        session.away_time ?? 0,
+        session.inactive_time ?? 0,
+        session.background_time ?? 0,
+        session.warnings ?? 0,
+        session.tab_switches ?? 0,
+        0, // violations
+        session.questions_asked ?? 0,
+        session.question_text || null,
+        session.engagement_score ?? null,
+        session.attention_score ?? null,
+        session.overall_score ?? null,
+        'Live Meeting',
+        session.quiz_completed ? 'Live Quiz' : null,
+        'Live Activity Monitor'
+      ]);
+    }
+
+    console.log(`✅ [LIVE ANALYTICS] Successfully recorded ${studentsToSave.length} student(s) for ${cleanTopic} (${cleanSubTopic}) on ${today}`);
+    return { success: true, count: studentsToSave.length };
+  } catch (err) {
+    console.error('❌ [LIVE ANALYTICS ERROR] Failed to save live session analytics:', err);
+    return { success: false, error: err.message };
   }
 };

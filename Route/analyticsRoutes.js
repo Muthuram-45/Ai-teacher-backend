@@ -1,12 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const analyticsController = require('../Controllers/analyticsController');
-const multer = require('multer');
-
-const upload = multer({ dest: 'uploads/' });
-
-// Upload reports API
-router.post('/upload', upload.array('reports'), analyticsController.uploadReports);
 
 // Get list of topics and dates
 router.get('/courses', analyticsController.getCourses);
@@ -36,5 +30,9 @@ router.get('/student-progress', analyticsController.getStudentProgress);
 router.get('/sessions', analyticsController.getSessions);
 router.get('/recent-classes', analyticsController.getRecentClasses);
 router.get('/activity-breakdown', analyticsController.getActivityBreakdown);
+
+// Admin Portal - Meeting-Centric & Consolidated Endpoints
+router.get('/admin-meetings', analyticsController.getAdminMeetings);
+router.get('/meeting-consolidated', analyticsController.getMeetingConsolidated);
 
 module.exports = router;
