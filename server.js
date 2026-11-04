@@ -47,10 +47,26 @@ const isProduction = process.env.NODE_ENV === "production";
 let corsOrigin;
 
 if (process.env.FRONTEND_URL) {
-  corsOrigin = process.env.FRONTEND_URL.split(",").map(u => u.trim());
-} else if (isProduction) {
-  console.warn("⚠️ FRONTEND_URL environment variable is not set in production. Defaulting to allow all origins. Please configure FRONTEND_URL in Render environment variables.");
-  corsOrigin = true;
+  const allowed = process.env.FRONTEND_URL.split(",")
+    .map(u => u.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  corsOrigin = function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const cleanOrigin = origin.trim().replace(/\/+$/, "");
+
+    if (
+      allowed.includes(cleanOrigin) ||
+      allowed.includes("*") ||
+      cleanOrigin.endsWith(".vercel.app") ||
+      cleanOrigin.includes("localhost")
+    ) {
+      return callback(null, true);
+    }
+
+    console.warn(`[CORS] Rejected origin: ${origin}`);
+    return callback(null, false);
+  };
 } else {
   corsOrigin = true;
 }
@@ -58,8 +74,12 @@ if (process.env.FRONTEND_URL) {
 const corsOptions = {
   origin: corsOrigin,
   credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 };
+
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 // ❤️ Health check endpoint (lightweight, no external calls)
