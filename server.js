@@ -49,8 +49,8 @@ let corsOrigin;
 if (process.env.FRONTEND_URL) {
   corsOrigin = process.env.FRONTEND_URL.split(",").map(u => u.trim());
 } else if (isProduction) {
-  console.error("❌ FRONTEND_URL environment variable is required in production for CORS configuration.");
-  throw new Error("FRONTEND_URL environment variable is required in production.");
+  console.warn("⚠️ FRONTEND_URL environment variable is not set in production. Defaulting to allow all origins. Please configure FRONTEND_URL in Render environment variables.");
+  corsOrigin = true;
 } else {
   corsOrigin = true;
 }
