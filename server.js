@@ -289,10 +289,35 @@ app.get("/join-status/:requestId", (req, res) => {
 });
 
 app.get("/waiting-students/:room", (req, res) => {
-  const { room } = req.params;
+  const rawRoom = (req.params.room || "").trim();
+  let decodedRoom = rawRoom;
+  try {
+    decodedRoom = decodeURIComponent(rawRoom).trim();
+  } catch (e) {}
+
+  const normRaw = rawRoom.toLowerCase();
+  const normDecoded = decodedRoom.toLowerCase();
+
   const list = Object.entries(waitingStudents)
-    .filter(([id, req]) => req.room === room && req.status === "waiting")
-    .map(([id, req]) => ({ id, name: req.name }));
+    .filter(([id, r]) => {
+      if (r.status !== "waiting") return false;
+      const rRoom = (r.room || "").trim().toLowerCase();
+      return (
+        rRoom === normRaw ||
+        rRoom === normDecoded ||
+        rRoom.replace(/\+/g, " ") === normDecoded.replace(/\+/g, " ") ||
+        rRoom.replace(/\s+/g, "-") === normDecoded.replace(/\s+/g, "-") ||
+        normDecoded.includes(rRoom) ||
+        rRoom.includes(normDecoded)
+      );
+    })
+    .map(([id, r]) => ({
+      id,
+      name: r.name,
+      deviceType: r.deviceType,
+      preferredLanguage: r.preferredLanguage
+    }));
+
   res.json({ waiting: list });
 });
 
